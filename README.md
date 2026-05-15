@@ -9,8 +9,8 @@
 
 **https://ea-muruntov-pos.vercel.app**
 
-- GitHub: https://github.com/euroasiamuruntov-ux/ea-muruntov-pos
-- Supabase: https://supabase.com (org: ea-muruntov-pos)
+- GitHub: https://github.com/euroasiamuruntov-ux/ea-muruntov-pos (Public)
+- Supabase: etllsvlxtdumbwugxvia.supabase.co (Frankfurt, Free)
 - Vercel: ea-muruntov-s-projects (Hobby plan)
 
 ---
@@ -20,9 +20,10 @@
 - **Asosiy rang:** `#C8860A` (oltin)
 - **Ochiq oltin:** `#F5C842`
 - **Fon qoʻng'ir:** `#1A1208`, `#2C200A`, `#3D2E10`
-- **Yashil (muvaffaqiyat):** `#1E7B47`
-- **Qizil (xato/qarz):** `#B83232`
+- **Yashil:** `#1E7B47`
+- **Qizil:** `#B83232`
 - **Font:** Nunito (700, 800, 900)
+- **Ikonlar:** Lucide React
 
 ---
 
@@ -35,6 +36,7 @@
 | TypeScript | ^5 | Tip xavfsizligi |
 | Tailwind CSS | ^4 | Stil |
 | Supabase JS | ^2.105.4 | DB client |
+| Lucide React | latest | Ikonalar |
 | jsPDF | latest | PDF hisobot |
 | Supabase | Free tier | PostgreSQL DB |
 | Vercel | Hobby (bepul) | Hosting |
@@ -49,10 +51,9 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 SUPABASE_SECRET_KEY=sb_secret_...
 ```
 
-- **Supabase region:** Central EU (Frankfurt) `eu-central-1`
-- **Supabase org:** `ea-muruntov-pos` (FREE)
 - **GitHub username:** `euroasiamuruntov-ux`
 - **Gmail:** `euroasiamuruntov@gmail.com`
+- **Collaborator:** `Shohruh459`
 
 ---
 
@@ -60,11 +61,11 @@ SUPABASE_SECRET_KEY=sb_secret_...
 
 | Rol | Kirish usuli | Yo'nalish |
 |-----|-------------|-----------|
-| Egasi (owner) | "Egasi" tab → parol | `/admin` |
+| Egasi (owner) | "Egasi" tab → parol (email yo'q) | `/admin` |
 | Xodim (worker) | 4 xonali PIN kod | `/cashier` |
 
 **Kirish ma'lumotlari:**
-- Egasi: email `euroasiamuruntov@gmail.com` / parol: `61`
+- Egasi parol: `6661`
 - Xodim Jasur: PIN `1234`
 
 ---
@@ -77,7 +78,7 @@ categories     — taom kategoriyalari
 products       — taomlar (narx, kategoriya, mavjudlik)
 shifts         — smenalar (ochilgan/yopilgan)
 shift_stock    — smena boshidagi mahsulot miqdori
-orders         — buyurtmalar (pay_type: naqd | karta | qarz)
+orders         — buyurtmalar (pay_type: naqd | click | karta | qarz)
 order_items    — buyurtma tarkibi
 ```
 
@@ -88,7 +89,7 @@ order_items    — buyurtma tarkibi
 ```
 ea-muruntov-pos/
 ├── app/
-│   ├── page.tsx           ✅ Login sahifasi
+│   ├── page.tsx           ✅ Login (PIN + egasi parol)
 │   ├── admin/
 │   │   └── page.tsx       ✅ Admin paneli
 │   ├── cashier/
@@ -106,20 +107,21 @@ ea-muruntov-pos/
 
 ### Infratuzilma
 - [x] Gmail: `euroasiamuruntov@gmail.com`
-- [x] GitHub: `euroasiamuruntov-ux`
+- [x] GitHub: `euroasiamuruntov-ux` (Public repo)
 - [x] Vercel: Hobby plan, deploy qilindi
 - [x] Supabase: Frankfurt, Free tier
-- [x] Supabase jadvallari: 7 ta
-- [x] Test ma'lumotlar: egasi + xodim + kategoriyalar + mahsulotlar
+- [x] 7 ta jadval yaratildi
+- [x] Haqiqiy mahsulotlar kiritildi (chekdan, sigaretlarsiz)
 
 ### Kod
-- [x] `app/page.tsx` — Login (PIN + egasi)
+- [x] `app/page.tsx` — Login (PIN + egasi faqat parol)
 - [x] `app/cashier/page.tsx` — Kassir paneli:
   - [x] Kategoriya tablari
   - [x] Katta mahsulot kartalar (landscape)
   - [x] Savat (+/- boshqaruv)
-  - [x] To'lov modal (naqd/karta/qarz)
+  - [x] To'lov modal (naqd/click/karta/qarz — 4 ta)
   - [x] DB ga saqlash
+  - [x] Lucide ikonalar
 - [x] `app/admin/page.tsx` — Admin paneli:
   - [x] Smena ochish/yopish
   - [x] Mahsulot miqdori (sklad)
@@ -127,29 +129,31 @@ ea-muruntov-pos/
   - [x] Kategoriya qo'shish/o'chirish
   - [x] Mahsulot qo'shish/o'chirish
   - [x] Xodim qo'shish/o'chirish + PIN
-  - [x] Hisobot (statistika + qarzdorlar)
+  - [x] Hisobot (naqd/click/karta/qarz statistika)
   - [x] PDF yuklab olish
-- [x] GitHub push
+  - [x] Lucide ikonalar
+- [x] GitHub push ✅
 - [x] Vercel deploy ✅ LIVE
 
 ---
 
 ## 🔲 Qolgan ishlar
 
-- [ ] Mahsulotlarga haqiqiy rasmlar (admin paneldan yuklash)
+- [ ] Mahsulotlarga rasm yuklash (admin paneldan)
 - [ ] Smena yopilganda qoldiq miqdor kiritish (farq hisobi)
-- [ ] Vercel environment variables tekshirish (production)
-- [ ] Mijoz o'z mahsulotlarini qo'shishi (demo video)
+- [ ] Egasi o'z mahsulotlarini qo'shishi (demo video)
 
 ---
 
-## 📦 Mahsulotlar (DB da mavjud)
+## 📦 Kategoriyalar (DB da)
 
-**Issiq taomlar:** Lag'mon (30k), Osh (35k), Mastava (22k), Beshbarmaq (50k), Set Bifshteks (35k), Tovuqli Qozon Kabob (30k)
-
-**Ichimliklar:** Fanta 0.5L (10k), Coca Cola 0.5L (10k), Kompot Bokal (8k), Santal 1.0 (6k), Sprite 0.5 (9k)
-
-**Salatlar:** Sabzavotli Tovuq (25k), Salat (10k)
+1. Issiq taomlar
+2. Somsa & Non
+3. Shirinliklar
+4. Ichimliklar
+5. Sharbatlar
+6. Salatlar
+7. Boshqa
 
 > ⚠️ Sigaretlar qo'shilmagan — egasi o'zi qo'shadi (demo video uchun)
 
@@ -172,7 +176,6 @@ npm run dev
 - **Jami:** $1,300 (~16,640,000 so'm)
 - **50% oldindan:** $650
 - **50% topshirishda:** $650
-- **Muddat:** 2–3 hafta
 - **Platform:** Planshet brauzer (landscape)
 
 ---
