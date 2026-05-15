@@ -1,65 +1,144 @@
-import Image from "next/image";
+'use client'
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { supabase } from '@/lib/supabase'
 
-export default function Home() {
+export default function LoginPage() {
+  const router = useRouter()
+  const [tab, setTab] = useState<'pin' | 'owner'>('pin')
+  const [pin, setPin] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const handlePin = async (val: string) => {
+    const newPin = pin + val
+    setPin(newPin)
+    if (newPin.length < 4) return
+    setLoading(true)
+    setError('')
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('pin', newPin)
+      .eq('role', 'worker')
+      .single()
+    if (error || !data) {
+      setError("Noto'g'ri kod!")
+      setPin('')
+    } else {
+      localStorage.setItem('pos_user', JSON.stringify(data))
+      router.push('/cashier')
+    }
+    setLoading(false)
+  }
+
+  const handleOwner = async () => {
+    setLoading(true)
+    setError('')
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .eq('role', 'owner')
+      .single()
+    if (error || !data || data.pin !== password) {
+      setError("Noto'g'ri email yoki parol!")
+    } else {
+      localStorage.setItem('pos_user', JSON.stringify(data))
+      router.push('/admin')
+    }
+    setLoading(false)
+  }
+
+  const dots = [0,1,2,3]
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="min-h-screen bg-[#1A1208] flex items-center justify-center p-4">
+      <div className="bg-[#2C200A] border border-[#3D2E10] rounded-2xl p-8 w-full max-w-sm">
+        
+        <div className="text-center mb-8">
+          <div className="text-4xl font-black text-[#F5C842] tracking-widest">EA</div>
+          <div className="text-xs text-gray-500 tracking-[4px] mt-1">MURUNTOV · POS</div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+
+        {/* Tablar */}
+        <div className="flex bg-[#3D2E10] rounded-xl p-1 mb-6 gap-1">
+          <button
+            onClick={() => { setTab('pin'); setPin(''); setError('') }}
+            className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${tab === 'pin' ? 'bg-[#C8860A] text-[#1A1208]' : 'text-gray-400'}`}
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+            Xodim kodi
+          </button>
+          <button
+            onClick={() => { setTab('owner'); setPin(''); setError('') }}
+            className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${tab === 'owner' ? 'bg-[#C8860A] text-[#1A1208]' : 'text-gray-400'}`}
+          >
+            Egasi
+          </button>
+        </div>
+
+        {tab === 'pin' ? (
+          <>
+            {/* PIN dots */}
+            <div className="flex justify-center gap-3 mb-6">
+              {dots.map(i => (
+                <div key={i} className={`w-12 h-12 rounded-xl flex items-center justify-center text-xl transition-all ${i < pin.length ? 'bg-[#C8860A]/20 border-2 border-[#C8860A] text-[#F5C842]' : 'bg-[#3D2E10] border-2 border-[#3D2E10]'}`}>
+                  {i < pin.length ? '●' : ''}
+                </div>
+              ))}
+            </div>
+
+            {/* Pinpad */}
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              {['1','2','3','4','5','6','7','8','9'].map(n => (
+                <button key={n} onClick={() => pin.length < 4 && handlePin(n)}
+                  className="py-4 rounded-xl bg-[#3D2E10] text-[#F5C842] text-xl font-bold hover:bg-[#4D3E1A] transition-all">
+                  {n}
+                </button>
+              ))}
+              <div />
+              <button onClick={() => pin.length < 4 && handlePin('0')}
+                className="py-4 rounded-xl bg-[#3D2E10] text-[#F5C842] text-xl font-bold hover:bg-[#4D3E1A] transition-all">
+                0
+              </button>
+              <button onClick={() => setPin(p => p.slice(0, -1))}
+                className="py-4 rounded-xl bg-[#3D2E10] text-gray-400 text-sm font-bold hover:bg-[#4D3E1A] transition-all">
+                ⌫
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="flex flex-col gap-3 mb-4">
+            <input
+              type="email"
+              placeholder="Email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              className="w-full bg-[#3D2E10] border border-[#3D2E10] rounded-xl px-4 py-3 text-[#F5C842] placeholder-gray-600 outline-none focus:border-[#C8860A] text-sm"
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+            <input
+              type="password"
+              placeholder="Parol"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleOwner()}
+              className="w-full bg-[#3D2E10] border border-[#3D2E10] rounded-xl px-4 py-3 text-[#F5C842] placeholder-gray-600 outline-none focus:border-[#C8860A] text-sm"
+            />
+            <button
+              onClick={handleOwner}
+              disabled={loading}
+              className="w-full py-3 bg-[#C8860A] text-[#1A1208] rounded-xl font-bold text-sm hover:bg-[#F5C842] transition-all disabled:opacity-50"
+            >
+              {loading ? 'Kirish...' : 'Kirish'}
+            </button>
+          </div>
+        )}
+
+        {error && <p className="text-red-400 text-xs text-center mt-2">{error}</p>}
+        {loading && tab === 'pin' && <p className="text-gray-500 text-xs text-center mt-2">Tekshirilmoqda...</p>}
+      </div>
     </div>
-  );
+  )
 }
