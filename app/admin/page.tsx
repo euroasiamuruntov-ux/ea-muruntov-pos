@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import jsPDF from 'jspdf'
+import { Clock, UtensilsCrossed, Users, BarChart3, LogOut } from 'lucide-react'
 
 type User = { id: string; name: string; role: string }
 type Category = { id: string; name: string; order_num: number }
@@ -277,12 +278,12 @@ export default function AdminPage() {
   showToast('✅ PDF yuklab olindi!')
 }
 
-  const tabs: { id: Tab; label: string }[] = [
-    { id: 'smena', label: '⏱ Smena' },
-    { id: 'mahsulot', label: '🍽 Menyu' },
-    { id: 'xodim', label: '👤 Xodimlar' },
-    { id: 'hisobot', label: '📊 Hisobot' },
-  ]
+  const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
+  { id: 'smena', label: 'Smena', icon: <Clock size={16}/> },
+  { id: 'mahsulot', label: 'Menyu', icon: <UtensilsCrossed size={16}/> },
+  { id: 'xodim', label: 'Xodimlar', icon: <Users size={16}/> },
+  { id: 'hisobot', label: 'Hisobot', icon: <BarChart3 size={16}/> },
+]
 
   return (
     <div className="min-h-screen bg-[#F5F3EE]">
@@ -298,20 +299,20 @@ export default function AdminPage() {
             {shift ? '● Smena ochiq' : '○ Smena yopiq'}
           </div>
           <button onClick={() => { localStorage.removeItem('pos_user'); router.push('/') }}
-            className="border border-gray-600 text-gray-400 rounded-lg px-3 py-1.5 text-xs hover:border-gray-400 transition-all">
-            Chiqish
-          </button>
+  className="border border-gray-600 text-gray-400 rounded-lg px-3 py-1.5 text-xs hover:border-gray-400 transition-all flex items-center gap-1.5">
+  <LogOut size={14}/> Chiqish
+</button>
         </div>
       </div>
 
       {/* TABLAR */}
       <div className="bg-white border-b border-gray-200 px-4 flex gap-1 sticky top-[52px] z-30">
         {tabs.map(t => (
-          <button key={t.id} onClick={() => setActiveTab(t.id)}
-            className={`px-5 py-3 text-sm font-bold border-b-2 transition-all ${activeTab === t.id ? 'border-[#C8860A] text-[#C8860A]' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
-            {t.label}
-          </button>
-        ))}
+  <button key={t.id} onClick={() => setActiveTab(t.id)}
+    className={`flex items-center gap-1.5 px-5 py-3 text-sm font-bold border-b-2 transition-all ${activeTab === t.id ? 'border-[#C8860A] text-[#C8860A]' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+    {t.icon} {t.label}
+  </button>
+))}
       </div>
 
       <div className="max-w-3xl mx-auto p-4">

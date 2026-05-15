@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { Lock, User } from 'lucide-react'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -35,22 +36,22 @@ export default function LoginPage() {
   }
 
   const handleOwner = async () => {
-    setLoading(true)
-    setError('')
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', email)
-      .eq('role', 'owner')
-      .single()
-    if (error || !data || data.pin !== password) {
-      setError("Noto'g'ri email yoki parol!")
-    } else {
-      localStorage.setItem('pos_user', JSON.stringify(data))
-      router.push('/admin')
-    }
-    setLoading(false)
+  setLoading(true)
+  setError('')
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('pin', password)
+    .eq('role', 'owner')
+    .single()
+  if (error || !data) {
+    setError("Noto'g'ri parol!")
+  } else {
+    localStorage.setItem('pos_user', JSON.stringify(data))
+    router.push('/admin')
   }
+  setLoading(false)
+}
 
   const dots = [0,1,2,3]
 
@@ -111,29 +112,25 @@ export default function LoginPage() {
           </>
         ) : (
           <div className="flex flex-col gap-3 mb-4">
-            <input
-              type="email"
-              placeholder="Email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              className="w-full bg-[#3D2E10] border border-[#3D2E10] rounded-xl px-4 py-3 text-[#F5C842] placeholder-gray-600 outline-none focus:border-[#C8860A] text-sm"
-            />
-            <input
-              type="password"
-              placeholder="Parol"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleOwner()}
-              className="w-full bg-[#3D2E10] border border-[#3D2E10] rounded-xl px-4 py-3 text-[#F5C842] placeholder-gray-600 outline-none focus:border-[#C8860A] text-sm"
-            />
-            <button
-              onClick={handleOwner}
-              disabled={loading}
-              className="w-full py-3 bg-[#C8860A] text-[#1A1208] rounded-xl font-bold text-sm hover:bg-[#F5C842] transition-all disabled:opacity-50"
-            >
-              {loading ? 'Kirish...' : 'Kirish'}
-            </button>
-          </div>
+  <div className="relative">
+    <Lock className="absolute left-3 top-3 text-gray-600" size={18}/>
+    <input
+      type="password"
+      placeholder="Parol"
+      value={password}
+      onChange={e => setPassword(e.target.value)}
+      onKeyDown={e => e.key === 'Enter' && handleOwner()}
+      className="w-full bg-[#3D2E10] border border-[#3D2E10] rounded-xl pl-10 pr-4 py-3 text-[#F5C842] placeholder-gray-600 outline-none focus:border-[#C8860A] text-sm"
+    />
+  </div>
+  <button
+    onClick={handleOwner}
+    disabled={loading}
+    className="w-full py-3 bg-[#C8860A] text-[#1A1208] rounded-xl font-bold text-sm hover:bg-[#F5C842] transition-all disabled:opacity-50"
+  >
+    {loading ? 'Kirish...' : 'Kirish'}
+  </button>
+</div>
         )}
 
         {error && <p className="text-red-400 text-xs text-center mt-2">{error}</p>}

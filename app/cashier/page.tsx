@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { LogOut, ShoppingCart } from 'lucide-react'
 
 type User = { id: string; name: string; role: string }
 type Category = { id: string; name: string }
@@ -128,11 +129,10 @@ export default function CashierPage() {
           <div className="text-gray-500 text-xs mt-0.5">{user?.name} · Kassir</div>
         </div>
         <button
-          onClick={() => { localStorage.removeItem('pos_user'); router.push('/') }}
-          className="border border-gray-600 text-gray-400 rounded-lg px-3 py-1.5 text-xs hover:border-gray-400 transition-all"
-        >
-          Chiqish
-        </button>
+  onClick={() => { localStorage.removeItem('pos_user'); router.push('/') }}
+  className="border border-gray-600 text-gray-400 rounded-lg px-3 py-1.5 text-xs hover:border-gray-400 transition-all flex items-center gap-1.5">
+  <LogOut size={14}/> Chiqish
+</button>
       </div>
 
       {/* MAIN */}
@@ -197,9 +197,9 @@ export default function CashierPage() {
           <div className="flex-1 overflow-y-auto px-3 py-2">
             {cart.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-gray-300 gap-3">
-                <div className="text-5xl">🛒</div>
-                <div className="text-sm font-bold">Mahsulot tanlang</div>
-              </div>
+  <ShoppingCart size={48} strokeWidth={1.5}/>
+  <div className="text-sm font-bold">Mahsulot tanlang</div>
+</div>
             ) : (
               cart.map(item => (
                 <div key={item.product.id} className="flex items-center gap-2 py-3 border-b border-gray-50">
