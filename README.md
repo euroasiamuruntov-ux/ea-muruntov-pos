@@ -64,7 +64,7 @@ SUPABASE_SECRET_KEY=sb_secret_...
 | Xodim (worker) | 4 xonali PIN kod | `/cashier` |
 
 **Kirish ma'lumotlari:**
-- Egasi: email `euroasiamuruntov@gmail.com` / parol: `6661`
+- Egasi: email `euroasiamuruntov@gmail.com` / parol: `61`
 - Xodim Jasur: PIN `1234`
 
 ---
