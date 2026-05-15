@@ -5,6 +5,16 @@
 
 ---
 
+## 🌐 Live URL
+
+**https://ea-muruntov-pos.vercel.app**
+
+- GitHub: https://github.com/euroasiamuruntov-ux/ea-muruntov-pos
+- Supabase: https://supabase.com (org: ea-muruntov-pos)
+- Vercel: ea-muruntov-s-projects (Hobby plan)
+
+---
+
 ## 🎨 Brend
 
 - **Asosiy rang:** `#C8860A` (oltin)
@@ -25,12 +35,13 @@
 | TypeScript | ^5 | Tip xavfsizligi |
 | Tailwind CSS | ^4 | Stil |
 | Supabase JS | ^2.105.4 | DB client |
+| jsPDF | latest | PDF hisobot |
 | Supabase | Free tier | PostgreSQL DB |
 | Vercel | Hobby (bepul) | Hosting |
 
 ---
 
-## 🌐 Muhit ma'lumotlari
+## 🌐 Muhit ma'lumotlari (.env.local)
 
 ```env
 NEXT_PUBLIC_SUPABASE_URL=https://etllsvlxtdumbwugxvia.supabase.co
@@ -40,8 +51,8 @@ SUPABASE_SECRET_KEY=sb_secret_...
 
 - **Supabase region:** Central EU (Frankfurt) `eu-central-1`
 - **Supabase org:** `ea-muruntov-pos` (FREE)
-- **GitHub account:** mijoz Gmail bilan ochilgan
-- **Vercel account:** mijoz GitHub orqali (Hobby plan)
+- **GitHub username:** `euroasiamuruntov-ux`
+- **Gmail:** `euroasiamuruntov@gmail.com`
 
 ---
 
@@ -49,12 +60,12 @@ SUPABASE_SECRET_KEY=sb_secret_...
 
 | Rol | Kirish usuli | Yo'nalish |
 |-----|-------------|-----------|
-| Egasi (owner) | Email + parol (PIN maydonida) | `/admin` |
+| Egasi (owner) | "Egasi" tab → parol | `/admin` |
 | Xodim (worker) | 4 xonali PIN kod | `/cashier` |
 
-**Test ma'lumotlar:**
-- Egasi: `euroasiamuruntov@gmail.com` / parol: `6661`
-- Xodim: Jasur — PIN: `1234`
+**Kirish ma'lumotlari:**
+- Egasi: email `euroasiamuruntov@gmail.com` / parol: `6661`
+- Xodim Jasur: PIN `1234`
 
 ---
 
@@ -77,15 +88,15 @@ order_items    — buyurtma tarkibi
 ```
 ea-muruntov-pos/
 ├── app/
-│   ├── page.tsx          ✅ Login sahifasi (PIN + egasi)
-│   ├── admin/            🔲 Admin panel
-│   │   └── page.tsx
-│   ├── cashier/          🔲 Kassir panel
-│   │   └── page.tsx
+│   ├── page.tsx           ✅ Login sahifasi
+│   ├── admin/
+│   │   └── page.tsx       ✅ Admin paneli
+│   ├── cashier/
+│   │   └── page.tsx       ✅ Kassir paneli
 │   └── layout.tsx
 ├── lib/
-│   └── supabase.ts       ✅ Supabase client
-├── .env.local            ✅ Muhit o'zgaruvchilari
+│   └── supabase.ts        ✅ Supabase client
+├── .env.local             ✅ Muhit o'zgaruvchilari
 └── README.md
 ```
 
@@ -94,68 +105,75 @@ ea-muruntov-pos/
 ## ✅ Bajarilgan ishlar
 
 ### Infratuzilma
-- [x] Gmail ochildi (mijoz uchun): `euroasiamuruntov@gmail.com`
-- [x] GitHub ochildi (mijoz Gmail bilan)
-- [x] Vercel ochildi (GitHub orqali, Hobby plan)
-- [x] Supabase ochildi (Frankfurt, Free tier)
-- [x] Supabase jadvallari yaratildi (7 ta)
-- [x] Test ma'lumotlar kiritildi (egasi + xodim + kategoriyalar)
+- [x] Gmail: `euroasiamuruntov@gmail.com`
+- [x] GitHub: `euroasiamuruntov-ux`
+- [x] Vercel: Hobby plan, deploy qilindi
+- [x] Supabase: Frankfurt, Free tier
+- [x] Supabase jadvallari: 7 ta
+- [x] Test ma'lumotlar: egasi + xodim + kategoriyalar + mahsulotlar
 
 ### Kod
-- [x] Next.js 16 loyihasi yaratildi
-- [x] Supabase JS o'rnatildi
-- [x] `lib/supabase.ts` — Supabase client
-- [x] `.env.local` — API kalitlar
-- [x] `app/page.tsx` — Login sahifasi (PIN + egasi kirishi, DB bilan ulangan)
+- [x] `app/page.tsx` — Login (PIN + egasi)
+- [x] `app/cashier/page.tsx` — Kassir paneli:
+  - [x] Kategoriya tablari
+  - [x] Katta mahsulot kartalar (landscape)
+  - [x] Savat (+/- boshqaruv)
+  - [x] To'lov modal (naqd/karta/qarz)
+  - [x] DB ga saqlash
+- [x] `app/admin/page.tsx` — Admin paneli:
+  - [x] Smena ochish/yopish
+  - [x] Mahsulot miqdori (sklad)
+  - [x] Mavjudlik belgisi (bor/yo'q)
+  - [x] Kategoriya qo'shish/o'chirish
+  - [x] Mahsulot qo'shish/o'chirish
+  - [x] Xodim qo'shish/o'chirish + PIN
+  - [x] Hisobot (statistika + qarzdorlar)
+  - [x] PDF yuklab olish
+- [x] GitHub push
+- [x] Vercel deploy ✅ LIVE
 
 ---
 
-## 🔲 Keyingi ishlar (navbat bo'yicha)
+## 🔲 Qolgan ishlar
 
-### 1. Kassir paneli `/cashier`
-- [ ] Kategoriya tablari
-- [ ] Mahsulot kartalar (katta, landscape planshet uchun)
-- [ ] Savat (o'ng panel)
-- [ ] To'lov modal (naqd/karta/qarz)
-- [ ] Ochiq hisoblar
-- [ ] Qarzdorlar
-
-### 2. Admin paneli `/admin`
-- [ ] Smena ochish/yopish
-- [ ] Mahsulot miqdori kiritish (smena boshi)
-- [ ] Mavjudlik belgisi (bor/yo'q)
-- [ ] Kategoriya qo'shish
-- [ ] Taom qo'shish
-- [ ] Xodim qo'shish + PIN berish
-- [ ] Kunlik hisobot
-- [ ] PDF yuborish (link)
-
-### 3. Deploy
-- [ ] GitHub'ga push
-- [ ] Vercel'ga ulash
-- [ ] Environment variables qo'shish
+- [ ] Mahsulotlarga haqiqiy rasmlar (admin paneldan yuklash)
+- [ ] Smena yopilganda qoldiq miqdor kiritish (farq hisobi)
+- [ ] Vercel environment variables tekshirish (production)
+- [ ] Mijoz o'z mahsulotlarini qo'shishi (demo video)
 
 ---
 
-## 🖥️ Ishga tushirish
+## 📦 Mahsulotlar (DB da mavjud)
+
+**Issiq taomlar:** Lag'mon (30k), Osh (35k), Mastava (22k), Beshbarmaq (50k), Set Bifshteks (35k), Tovuqli Qozon Kabob (30k)
+
+**Ichimliklar:** Fanta 0.5L (10k), Coca Cola 0.5L (10k), Kompot Bokal (8k), Santal 1.0 (6k), Sprite 0.5 (9k)
+
+**Salatlar:** Sabzavotli Tovuq (25k), Salat (10k)
+
+> ⚠️ Sigaretlar qo'shilmagan — egasi o'zi qo'shadi (demo video uchun)
+
+---
+
+## 🖥️ Lokal ishga tushirish
 
 ```bash
-git clone https://github.com/...ea-muruntov-pos.git
+git clone https://github.com/euroasiamuruntov-ux/ea-muruntov-pos.git
 cd ea-muruntov-pos
 npm install
-# .env.local faylini yarating (yuqoridagi kalitlar bilan)
+# .env.local yarating
 npm run dev
 ```
 
 ---
 
-## 💰 Loyiha narxi va shartnoma
+## 💰 Shartnoma
 
-- **Jami narx:** $1,300 (~16,640,000 so'm)
+- **Jami:** $1,300 (~16,640,000 so'm)
 - **50% oldindan:** $650
 - **50% topshirishda:** $650
 - **Muddat:** 2–3 hafta
-- **Platform:** Planshet brauzer (landscape rejim)
+- **Platform:** Planshet brauzer (landscape)
 
 ---
 

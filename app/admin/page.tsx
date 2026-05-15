@@ -193,6 +193,7 @@ export default function AdminPage() {
   const totalRev = todayOrders.reduce((s, o) => s + o.total, 0)
   const cashRev = todayOrders.reduce((s, o) => s + (o.pay_type === 'naqd' ? o.total : 0), 0)
   const cardRev = todayOrders.reduce((s, o) => s + (o.pay_type === 'karta' ? o.total : 0), 0)
+  const clickRev = todayOrders.reduce((s, o) => s + (o.pay_type === 'click' ? o.total : 0), 0)
   const debtRev = todayOrders.reduce((s, o) => s + (o.pay_type === 'qarz' ? o.total : 0), 0)
   const activeDebts = todayOrders.filter(o => o.pay_type === 'qarz' && !o.debt_paid)
 
@@ -499,6 +500,7 @@ export default function AdminPage() {
                 { label: 'Jami tushum', val: fmt(totalRev) + ' so\'m', color: 'text-[#C8860A]' },
                 { label: 'Buyurtmalar', val: todayOrders.length + ' ta', color: 'text-[#1A1208]' },
                 { label: 'Naqd', val: fmt(cashRev) + ' so\'m', color: 'text-[#1E7B47]' },
+                { label: 'Click', val: fmt(clickRev) + ' so\'m', color: 'text-purple-600' },
                 { label: 'Karta', val: fmt(cardRev) + ' so\'m', color: 'text-blue-600' },
                 { label: 'Qarz', val: fmt(debtRev) + ' so\'m', color: 'text-[#B83232]' },
                 { label: 'Faol qarzlar', val: activeDebts.length + ' ta', color: 'text-[#B83232]' },

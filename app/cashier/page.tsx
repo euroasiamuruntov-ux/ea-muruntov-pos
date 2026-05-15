@@ -15,7 +15,7 @@ export default function CashierPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [activeCat, setActiveCat] = useState<string>('Barchasi')
   const [cart, setCart] = useState<CartItem[]>([])
-  const [payType, setPayType] = useState<'naqd' | 'karta' | 'qarz'>('naqd')
+  const [payType, setPayType] = useState<'naqd' | 'click' | 'karta' | 'qarz'>('naqd')
   const [debtorName, setDebtorName] = useState('')
   const [showPayModal, setShowPayModal] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -253,14 +253,14 @@ export default function CashierPage() {
             <div className="text-gray-400 text-sm mb-1">Jami summa:</div>
             <div className="text-[#C8860A] font-black text-3xl mb-4">{fmt(total)} so'm</div>
 
-            <div className="grid grid-cols-3 gap-3 mb-4">
-              {(['naqd', 'karta', 'qarz'] as const).map(t => (
-                <button key={t} type="button" onClick={() => setPayType(t)}            
-                  className={`py-3 rounded-xl border-2 font-bold text-sm transition-all ${payType === t ? 'border-[#C8860A] bg-[#FFF8E7] text-[#1A1208]' : 'border-gray-200 bg-gray-50 text-gray-500'}`}>
-                  {t === 'naqd' ? '💵 Naqd' : t === 'karta' ? '💳 Karta' : '📝 Qarz'}
-                </button>
-              ))}
-            </div>
+            <div className="grid grid-cols-2 gap-3 mb-4">
+  {(['naqd', 'click', 'karta', 'qarz'] as const).map(t => (
+    <button key={t} type="button" onClick={() => setPayType(t)}
+      className={`py-3 rounded-xl border-2 font-bold text-sm transition-all ${payType === t ? 'border-[#C8860A] bg-[#FFF8E7] text-[#1A1208]' : 'border-gray-200 bg-gray-50 text-gray-500'}`}>
+      {t === 'naqd' ? '💵 Naqd' : t === 'click' ? '📱 Click' : t === 'karta' ? '💳 Karta' : '📝 Qarz'}
+    </button>
+  ))}
+</div>
 
             {payType === 'qarz' && (
               <input
