@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Lock, User } from 'lucide-react'
+import { canStartTrial, startTrial } from '@/lib/trial'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -14,28 +15,43 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
 
   const handlePin = async (val: string) => {
-    const newPin = pin + val
-    setPin(newPin)
-    if (newPin.length < 4) return
-    setLoading(true)
-    setError('')
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('pin', newPin)
-      .eq('role', 'worker')
-      .single()
-    if (error || !data) {
-      setError("Noto'g'ri kod!")
-      setPin('')
-    } else {
-      localStorage.setItem('pos_user', JSON.stringify(data))
-      router.push('/cashier')
-    }
-    setLoading(false)
+  const newPin = pin + val
+  setPin(newPin)
+  if (newPin.length < 4) return
+
+  // Trial tekshirish
+  const trial = canStartTrial()
+  if (!trial.ok) {
+    setError(trial.reason || 'Limit tugadi!')
+    setPin('')
+    return
   }
 
+  setLoading(true)
+  setError('')
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('pin', newPin)
+    .eq('role', 'worker')
+    .single()
+  if (error || !data) {
+    setError("Noto'g'ri kod!")
+    setPin('')
+  } else {
+    startTrial()
+    localStorage.setItem('pos_user', JSON.stringify(data))
+    router.push('/cashier')
+  }
+  setLoading(false)
+}
+
   const handleOwner = async () => {
+  const trial = canStartTrial()
+  if (!trial.ok) {
+    setError(trial.reason || 'Limit tugadi!')
+    return
+  }
   setLoading(true)
   setError('')
   const { data, error } = await supabase
@@ -47,6 +63,7 @@ export default function LoginPage() {
   if (error || !data) {
     setError("Noto'g'ri parol!")
   } else {
+    startTrial()
     localStorage.setItem('pos_user', JSON.stringify(data))
     router.push('/admin')
   }
