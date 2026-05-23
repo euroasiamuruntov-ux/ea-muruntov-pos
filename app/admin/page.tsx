@@ -25,6 +25,7 @@ export default function AdminPage() {
 
   const [categories, setCategories] = useState<Category[]>([])
   const [products, setProducts] = useState<Product[]>([])
+  const [oshHissa, setOshHissa] = useState(0)
   const [shift, setShift] = useState<Shift | null>(null)
   const [stocks, setStocks] = useState<ShiftStock[]>([])
   const [orders, setOrders] = useState<Order[]>([])
@@ -82,9 +83,17 @@ export default function AdminPage() {
     setStockIns(si || [])
 
     if (shifts?.id) {
-      const { data: st } = await supabase.from('shift_stock').select('*').eq('shift_id', shifts.id)
-      setStocks(st || [])
-    }
+  const { data: st } = await supabase.from('shift_stock').select('*').eq('shift_id', shifts.id)
+  setStocks(st || [])
+
+  // Osh hissa
+  const { data: oh } = await supabase
+    .from('osh_stock')
+    .select('*')
+    .eq('shift_id', shifts.id)
+    .maybeSingle()
+  setOshHissa(oh?.total_hissa || 0)
+}
   }
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 2500) }
@@ -382,6 +391,26 @@ export default function AdminPage() {
                 </div>
               </div>
             )}
+            {/* OSH HISOBI */}
+{oshHissa > 0 && (
+  <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+    <div className="px-5 py-3 border-b border-gray-100 font-black text-base">🍚 Osh qoldig'i</div>
+    <div className="grid grid-cols-3 gap-4 p-5">
+      <div className="text-center">
+        <div className="text-2xl font-black text-[#C8860A]">{oshHissa}</div>
+        <div className="text-xs text-gray-400 mt-1 font-bold">Jami hissa</div>
+      </div>
+      <div className="text-center border-x border-gray-100">
+        <div className="text-2xl font-black text-green-600">{Math.floor(oshHissa / 3)}</div>
+        <div className="text-xs text-gray-400 mt-1 font-bold">Butun porsiya</div>
+      </div>
+      <div className="text-center">
+        <div className="text-2xl font-black text-blue-600">{Math.floor(oshHissa / 2)}</div>
+        <div className="text-xs text-gray-400 mt-1 font-bold">Yarim porsiya</div>
+      </div>
+    </div>
+  </div>
+)}
 
             {/* Ichki iste'mol */}
             {ichkiOrders.length > 0 && (

@@ -91,13 +91,13 @@ ea-muruntov-pos/
 ├── app/
 │   ├── page.tsx           ✅ Login
 │   ├── admin/
-│   │   └── page.tsx       ✅ Admin paneli
+│   │   └── page.tsx       ✅ Admin/Rahbar paneli
 │   ├── cashier/
 │   │   └── page.tsx       ✅ Kassir paneli
 │   └── layout.tsx
 ├── lib/
 │   ├── supabase.ts        ✅ Supabase client
-│   └── trial.ts           ✅ Trial timer (24s/3x/10min)
+│   └── trial.ts           ✅ Trial timer
 └── README.md
 ```
 
@@ -111,9 +111,9 @@ ea-muruntov-pos/
 - [x] Haqiqiy mahsulotlar kiritildi (chekdan, sigaretlarsiz)
 
 ### Login (`app/page.tsx`)
-- [x] Egasi — parol bilan (email yo'q)
+- [x] Egasi — parol bilan
 - [x] Xodim — 4 xonali PIN
-- [x] Trial timer tekshiruvi (limit bo'lsa xato)
+- [x] Trial timer tekshiruvi
 
 ### Kassir paneli (`app/cashier/page.tsx`)
 - [x] Smena ochish/yopish (kassir tomonidan)
@@ -126,41 +126,34 @@ ea-muruntov-pos/
 - [x] Mahsulot kirim moduli
 - [x] Mahsulot chiqim moduli (izoh bilan)
 - [x] Trial timer (topbarda countdown)
-- [x] DB ga saqlash
+- [x] Topbar tugmalar (inline style bilan tuzatildi)
 
-### Admin paneli (`app/admin/page.tsx`)
-- [x] Smena holati ko'rish
-- [x] Mahsulot miqdori (sklad)
-- [x] Mavjudlik belgisi (bor/yo'q)
-- [x] Kategoriya qo'shish/o'chirish
-- [x] Mahsulot qo'shish/o'chirish
-- [x] Xodim qo'shish/o'chirish + PIN
-- [x] Hisobot (naqd/click/karta/qarz/ichki)
+### Rahbar paneli (`app/admin/page.tsx`)
+- [x] Smena ma'lumoti (kim ochdi, kim yopdi, soat)
+- [x] Moliyaviy statistika (naqd/click/karta/qarz/ichki)
+- [x] Mahsulot hisobi jadvali (boshlang'ich/kirim/sotildi/chiqim/qoldiq)
+- [x] Ichki iste'mol ro'yxati (kim nima yedi)
+- [x] Chiqimlar ro'yxati (izoh bilan)
+- [x] Kirimlar ro'yxati
 - [x] Qarzdorlar + yopish
-- [x] PDF yuklab olish
+- [x] Kengaytirilgan PDF hisobot
+- [x] Kategoriya/mahsulot/xodim boshqaruvi
+- [x] Sklad (boshlang'ich miqdor, bor/yo'q)
 
 ### Trial tizimi (`lib/trial.ts`)
 - [x] 24 soat ichida 3 marta
-- [x] Har sessiya 10 daqiqa
+- [x] Har sessiya 1 soat
 - [x] Tugagach login sahifasiga qaytarish
 - [x] `disableTrial()` — to'lov olgach o'chirish
 
 ---
 
-## 🔲 Keyingi ishlar (2-bosqich)
+## 🔲 Keyingi ishlar
 
-### Rahbar kengaytirilgan hisoboti
-- [ ] Smena: kim ochdi, kim yopdi, soat
-- [ ] Kirimlar ro'yxati (kim, nima, qancha)
-- [ ] Chiqimlar ro'yxati (kim, nima, izoh)
-- [ ] Ichki iste'mol ro'yxati (kim nima yedi)
-- [ ] Har mahsulotdan nechta sotildi
-- [ ] Qoldiq hisobi: boshlang'ich − sotilgan − chiqim − ichki
-- [ ] PDF ga kirim/chiqim qo'shish
-
-### Kelajak
+- [ ] Sigaretlarni egasi o'zi qo'shishi (demo video)
+- [ ] Trial o'chirish (to'lov olgach `disableTrial()`)
+- [ ] Telegram bot (chiqim xabari rahbarga)
 - [ ] Osh yarim/butun porsiya hisobi
-- [ ] Telegram bot (chiqim xabari)
 - [ ] Mahsulotga rasm yuklash
 
 ---

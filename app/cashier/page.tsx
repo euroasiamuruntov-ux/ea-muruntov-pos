@@ -7,11 +7,21 @@ import { LogOut, ShoppingCart, Plus, X, PackagePlus, PackageMinus, Clock } from 
 
 type User = { id: string; name: string; role: string }
 type Category = { id: string; name: string }
-type Product = { id: string; name: string; price: number; category_id: string; is_available: boolean }
+type Product = {
+  id: string
+  name: string
+  price: number
+  category_id: string
+  is_available: boolean
+  unit_type: string
+  hissa_per_unit: number
+  kg_to_hissa: number
+}
 type CartItem = { product: Product; qty: number }
 type Bill = { id: number; cart: CartItem[] }
 type Shift = { id: string; is_open: boolean; opened_at: string }
-
+type Stock = { product_id: string; initial_qty: number }
+type StockIn = { id: string; product_id: string; qty: number }
 type ActiveModal = null | 'pay' | 'kirим' | 'chiqim' | 'smena'
 
 export default function CashierPage() {
@@ -21,19 +31,18 @@ export default function CashierPage() {
   const [categories, setCategories] = useState<Category[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [shift, setShift] = useState<Shift | null>(null)
+  const [stocks, setStocks] = useState<Stock[]>([])
+  const [stockIns, setStockIns] = useState<StockIn[]>([])
+  const [hissaStock, setHissaStock] = useState<{[shiftId: string]: number}>({})
   const [activeCat, setActiveCat] = useState('Barchasi')
   const [payType, setPayType] = useState<'naqd' | 'click' | 'karta' | 'qarz' | 'ichki'>('naqd')
   const [debtorName, setDebtorName] = useState('')
   const [activeModal, setActiveModal] = useState<ActiveModal>(null)
   const [toast, setToast] = useState('')
   const [loading, setLoading] = useState(false)
-
-  // Multi-bill
   const [bills, setBills] = useState<Bill[]>([{ id: 1, cart: [] }])
   const [activeBillId, setActiveBillId] = useState(1)
   const [nextBillId, setNextBillId] = useState(2)
-
-  // Kirim/Chiqim
   const [selectedProd, setSelectedProd] = useState('')
   const [qty, setQty] = useState('')
   const [reason, setReason] = useState('')
@@ -65,21 +74,49 @@ export default function CashierPage() {
   }, [])
 
   const loadData = async () => {
-  const [{ data: cats }, { data: prods }] = await Promise.all([
-    supabase.from('categories').select('*').order('order_num'),
-    supabase.from('products').select('*').order('created_at'),
-  ])
-  setCategories(cats || [])
-  setProducts(prods || [])
+    const [{ data: cats }, { data: prods }] = await Promise.all([
+      supabase.from('categories').select('*').order('order_num'),
+      supabase.from('products').select('*').order('created_at'),
+    ])
+    setCategories(cats || [])
+    setProducts(prods || [])
 
-  // Smena alohida yuklaymiz
-  const { data: shiftData } = await supabase
-    .from('shifts')
-    .select('*')
-    .eq('is_open', true)
-    .maybeSingle()
-  setShift(shiftData || null)
-}
+    const { data: shiftData } = await supabase
+      .from('shifts')
+      .select('*')
+      .eq('is_open', true)
+      .maybeSingle()
+    setShift(shiftData || null)
+
+    if (shiftData?.id) {
+      // Osh hissa
+      const { data: oshStock } = await supabase
+        .from('osh_stock')
+        .select('*')
+        .eq('shift_id', shiftData.id)
+        .maybeSingle()
+      if (oshStock) {
+        setHissaStock({ [shiftData.id]: oshStock.total_hissa })
+      }
+
+      // Boshlang'ich miqdor
+      const { data: stockData } = await supabase
+        .from('shift_stock')
+        .select('*')
+        .eq('shift_id', shiftData.id)
+      setStocks(stockData || [])
+
+      // Kirimlar
+      const { data: siData } = await supabase
+        .from('stock_ins')
+        .select('*')
+        .eq('shift_id', shiftData.id)
+      setStockIns(siData || [])
+    } else {
+      setStocks([])
+      setStockIns([])
+    }
+  }
 
   const showToast = (msg: string) => {
     setToast(msg); setTimeout(() => setToast(''), 2500)
@@ -87,24 +124,43 @@ export default function CashierPage() {
 
   const fmt = (n: number) => n.toLocaleString('uz-UZ')
 
+  const getHissaQoldiq = (product: Product): number => {
+    if (product.unit_type !== 'hissa') return 999
+    if (!shift) return 0
+    const totalHissa = hissaStock[shift.id] || 0
+    return Math.floor(totalHissa / product.hissa_per_unit)
+  }
+
+  const getDonaQoldiq = (productId: string): number | null => {
+    if (!shift) return null
+    const stock = stocks.find(s => s.product_id === productId)
+    if (!stock) return null
+    const kirim = stockIns
+      .filter(si => si.product_id === productId)
+      .reduce((s, si) => s + si.qty, 0)
+    const jami = (stock.initial_qty || 0) + kirim
+    if (jami === 0) return null
+    return jami
+  }
+
   // SMENA
   const openShift = async () => {
-  setLoading(true)
-  const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
-  const { data } = await supabase
-    .from('shifts')
-    .insert({ opened_by: u.id, is_open: true })
-    .select().single()
-  if (data) {
-    const stockRows = products.map(p => ({ shift_id: data.id, product_id: p.id, initial_qty: 0 }))
-    await supabase.from('shift_stock').insert(stockRows)
-    setShift(data)
-    showToast('✅ Smena ochildi!')
-    await loadData() // ← qo'shing
+    setLoading(true)
+    const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
+    const { data } = await supabase
+      .from('shifts')
+      .insert({ opened_by: u.id, is_open: true })
+      .select().single()
+    if (data) {
+      const stockRows = products.map(p => ({ shift_id: data.id, product_id: p.id, initial_qty: 0 }))
+      await supabase.from('shift_stock').insert(stockRows)
+      setShift(data)
+      showToast('✅ Smena ochildi!')
+      await loadData()
+    }
+    setLoading(false)
+    setActiveModal(null)
   }
-  setLoading(false)
-  setActiveModal(null)
-}
 
   const closeShift = async () => {
     if (!shift) return
@@ -114,6 +170,9 @@ export default function CashierPage() {
       .update({ is_open: false, closed_at: new Date().toISOString(), closed_by: u.id })
       .eq('id', shift.id)
     setShift(null)
+    setStocks([])
+    setStockIns([])
+    setHissaStock({})
     showToast('Smena yopildi')
     setLoading(false)
     setActiveModal(null)
@@ -139,7 +198,6 @@ export default function CashierPage() {
     setBills(prev => prev.map(b => b.id === activeBillId ? { ...b, cart: newCart } : b))
   }
 
-  // MAHSULOT
   const filteredProducts = activeCat === 'Barchasi'
     ? products
     : products.filter(p => {
@@ -149,6 +207,16 @@ export default function CashierPage() {
 
   const addToCart = (product: Product) => {
     if (!product.is_available) return
+
+    if (product.unit_type === 'hissa') {
+      const qoldiq = getHissaQoldiq(product)
+      const cartQtyNow = cart.find(i => i.product.id === product.id)?.qty || 0
+      if (cartQtyNow >= qoldiq) {
+        showToast(`⚠️ Yetarli ${product.name} yo'q!`)
+        return
+      }
+    }
+
     const existing = cart.find(i => i.product.id === product.id)
     if (existing) {
       updateBillCart(cart.map(i => i.product.id === product.id ? { ...i, qty: i.qty + 1 } : i))
@@ -158,6 +226,17 @@ export default function CashierPage() {
   }
 
   const changeQty = (productId: string, delta: number) => {
+    if (delta > 0) {
+      const prod = products.find(p => p.id === productId)
+      if (prod?.unit_type === 'hissa') {
+        const qoldiq = getHissaQoldiq(prod)
+        const cartQtyNow = cart.find(i => i.product.id === productId)?.qty || 0
+        if (cartQtyNow >= qoldiq) {
+          showToast(`⚠️ Yetarli ${prod.name} yo'q!`)
+          return
+        }
+      }
+    }
     const updated = cart.map(i => i.product.id === productId ? { ...i, qty: i.qty + delta } : i)
     updateBillCart(updated.filter(i => i.qty > 0))
   }
@@ -194,6 +273,29 @@ export default function CashierPage() {
       }))
     )
 
+    // Hissa ayirish
+    const hissaProducts = cart.filter(i => i.product.unit_type === 'hissa')
+    if (hissaProducts.length > 0 && shift) {
+      const totalAyirildi = hissaProducts.reduce((s, i) => s + i.product.hissa_per_unit * i.qty, 0)
+      const currentHissa = hissaStock[shift.id] || 0
+      const newHissa = Math.max(0, currentHissa - totalAyirildi)
+
+      const { data: existing } = await supabase
+        .from('osh_stock')
+        .select('*')
+        .eq('shift_id', shift.id)
+        .eq('product_group', 'osh')
+        .maybeSingle()
+
+      if (existing) {
+        await supabase.from('osh_stock')
+          .update({ total_hissa: newHissa, updated_at: new Date().toISOString() })
+          .eq('id', existing.id)
+      }
+
+      setHissaStock(prev => ({ ...prev, [shift.id]: newHissa }))
+    }
+
     updateBillCart([])
     setDebtorName('')
     setPayType('naqd')
@@ -207,12 +309,43 @@ export default function CashierPage() {
     if (!selectedProd || !qty) return
     setLoading(true)
     const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
-    await supabase.from('stock_ins').insert({
+    const prod = products.find(p => p.id === selectedProd)
+
+    const { data: newSi } = await supabase.from('stock_ins').insert({
       shift_id: shift?.id || null,
       product_id: selectedProd,
-      qty: parseInt(qty),
+      qty: parseFloat(qty),
       worker_id: u.id,
-    })
+    }).select().single()
+
+    // StockIns state ni yangilash
+    if (newSi) setStockIns(prev => [...prev, newSi])
+
+    if (prod?.unit_type === 'hissa' && shift) {
+      const kgMiqdor = parseFloat(qty)
+      const yangiHissa = Math.round(kgMiqdor * (prod.kg_to_hissa || 21))
+      const currentHissa = hissaStock[shift.id] || 0
+      const newHissa = currentHissa + yangiHissa
+
+      const { data: existing } = await supabase
+        .from('osh_stock')
+        .select('*')
+        .eq('shift_id', shift.id)
+        .eq('product_group', 'osh')
+        .maybeSingle()
+
+      if (existing) {
+        await supabase.from('osh_stock')
+          .update({ total_hissa: newHissa, updated_at: new Date().toISOString() })
+          .eq('id', existing.id)
+      } else {
+        await supabase.from('osh_stock')
+          .insert({ shift_id: shift.id, product_group: 'osh', total_hissa: newHissa })
+      }
+
+      setHissaStock(prev => ({ ...prev, [shift.id]: newHissa }))
+    }
+
     setSelectedProd(''); setQty('')
     setActiveModal(null)
     setLoading(false)
@@ -224,7 +357,7 @@ export default function CashierPage() {
     if (!selectedProd || !qty || !reason.trim()) return
     setLoading(true)
     const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
-    const prod = products.find(p => p.id === selectedProd)
+
     await supabase.from('write_offs').insert({
       shift_id: shift?.id || null,
       product_id: selectedProd,
@@ -232,43 +365,43 @@ export default function CashierPage() {
       reason: reason.trim(),
       worker_id: u.id,
     })
-    // Rahbar uchun notification (orders jadvaliga yozamiz hozircha)
-    // Keyinroq Telegram bot ulanadi
+
     setSelectedProd(''); setQty(''); setReason('')
     setActiveModal(null)
     setLoading(false)
-    showToast(`⚠️ Chiqim qilindi! Rahbarga xabar ketdi`)
+    showToast('⚠️ Chiqim qilindi!')
   }
 
   return (
     <div className="h-screen bg-[#F5F3EE] flex flex-col overflow-hidden">
 
       {/* TOPBAR */}
-<div className="bg-[#1C1407] px-3 py-2 flex items-center justify-between flex-shrink-0">
-  <div>
-    <div className="text-[#F5C842] font-black tracking-widest text-sm">EA MURUNTOV</div>
-    <div className="text-gray-500 text-xs">{user?.name} · Kassir</div>
-  </div>
-  <div style={{display:'flex', alignItems:'center', gap:'6px', flexShrink:0}}>
-  {timeLeft > 0 && (
-    <div style={{padding:'4px 8px', borderRadius:'8px', fontSize:'11px', fontWeight:900, background:'rgba(61,46,16,0.8)', color:'#F5C842', flexShrink:0}}>
-      ⏱ {Math.floor(timeLeft / 60000)}:{String(Math.floor((timeLeft % 60000) / 1000)).padStart(2, '0')}
-    </div>
-  )}
-  <button onClick={() => setActiveModal('smena')} style={{width:'32px', height:'32px', borderRadius:'8px', border: shift ? '1px solid #22c55e' : '1px solid #ef4444', background: shift ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)', color: shift ? '#4ade80' : '#f87171', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer'}}>
-    <Clock size={14}/>
-  </button>
-  <button onClick={() => setActiveModal('kirим')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#F5C842', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}>
-    <PackagePlus size={13}/>
-  </button>
-  <button onClick={() => setActiveModal('chiqim')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#f87171', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}>
-    <PackageMinus size={13}/>
-  </button>
-  <button onClick={() => { localStorage.removeItem('pos_user'); router.push('/') }} style={{width:'32px', height:'32px', borderRadius:'8px', border:'1px solid #4b5563', color:'#9ca3af', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', background:'transparent'}}>
-    <LogOut size={13}/>
-  </button>
-</div>
-</div>
+      <div className="bg-[#1C1407] px-3 py-2 flex items-center justify-between flex-shrink-0">
+        <div>
+          <div className="text-[#F5C842] font-black tracking-widest text-sm">EA MURUNTOV</div>
+          <div className="text-gray-500 text-xs">{user?.name} · Kassir</div>
+        </div>
+        <div style={{display:'flex', alignItems:'center', gap:'6px', flexShrink:0}}>
+          {timeLeft > 0 && (
+            <div style={{padding:'4px 8px', borderRadius:'8px', fontSize:'11px', fontWeight:900, background:'rgba(61,46,16,0.8)', color:'#F5C842', flexShrink:0}}>
+              ⏱ {Math.floor(timeLeft / 60000)}:{String(Math.floor((timeLeft % 60000) / 1000)).padStart(2, '0')}
+            </div>
+          )}
+          <button onClick={() => setActiveModal('smena')} style={{width:'32px', height:'32px', borderRadius:'8px', border: shift ? '1px solid #22c55e' : '1px solid #ef4444', background: shift ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)', color: shift ? '#4ade80' : '#f87171', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer'}}>
+            <Clock size={14}/>
+          </button>
+          <button onClick={() => setActiveModal('kirим')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#F5C842', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}>
+            <PackagePlus size={13}/>
+          </button>
+          <button onClick={() => setActiveModal('chiqim')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#f87171', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}>
+            <PackageMinus size={13}/>
+          </button>
+          <button onClick={() => { localStorage.removeItem('pos_user'); router.push('/') }} style={{width:'32px', height:'32px', borderRadius:'8px', border:'1px solid #4b5563', color:'#9ca3af', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', background:'transparent'}}>
+            <LogOut size={13}/>
+          </button>
+        </div>
+      </div>
+
       {/* MAIN */}
       <div className="flex flex-1 overflow-hidden">
 
@@ -287,10 +420,15 @@ export default function CashierPage() {
             <div className="grid grid-cols-3 gap-3">
               {filteredProducts.map(p => {
                 const qty = cartQty(p.id)
+                const hissaQoldiq = getHissaQoldiq(p)
+                const donaQoldiq = getDonaQoldiq(p.id)
+                const isHissa = p.unit_type === 'hissa'
+                const tugadi = isHissa && hissaQoldiq === 0
+
                 return (
                   <div key={p.id} onClick={() => addToCart(p)}
                     className={`bg-white rounded-2xl overflow-hidden cursor-pointer border-2 transition-all select-none
-                      ${!p.is_available ? 'opacity-40 pointer-events-none' : ''}
+                      ${!p.is_available || tugadi ? 'opacity-40 pointer-events-none' : ''}
                       ${qty > 0 ? 'border-[#F5C842]' : 'border-transparent hover:border-[#C8860A] hover:-translate-y-0.5'}`}>
                     <div className="bg-gradient-to-br from-[#FFF3D6] to-[#FFE8A3] h-24 flex items-center justify-center relative">
                       <span className="text-5xl">🍽️</span>
@@ -303,6 +441,21 @@ export default function CashierPage() {
                     <div className="p-3">
                       <div className="font-extrabold text-[#1A1208] text-sm leading-tight">{p.name}</div>
                       <div className="text-[#C8860A] font-black text-base mt-1">{fmt(p.price)} so'm</div>
+                      {isHissa ? (
+                        <div className={`text-xs font-bold mt-1 ${
+                          hissaQoldiq === 0 ? 'text-red-500' :
+                          hissaQoldiq <= 5 ? 'text-orange-500' : 'text-green-600'
+                        }`}>
+                          {hissaQoldiq === 0 ? 'Tugadi!' : `Qoldiq: ${hissaQoldiq} ta`}
+                        </div>
+                      ) : donaQoldiq !== null ? (
+                        <div className={`text-xs font-bold mt-1 ${
+                          donaQoldiq === 0 ? 'text-red-500' :
+                          donaQoldiq <= 5 ? 'text-orange-500' : 'text-green-600'
+                        }`}>
+                          {donaQoldiq === 0 ? 'Tugadi!' : `Qoldiq: ${donaQoldiq} ta`}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 )
@@ -382,45 +535,43 @@ export default function CashierPage() {
         </div>
       </div>
 
-      {/* ===== MODALLAR ===== */}
-
       {/* SMENA MODAL */}
-{activeModal === 'smena' && (
-  <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center">
-    <div className="bg-white rounded-t-3xl p-6 w-full max-w-md">
-      <div className="flex justify-between items-center mb-6">
-        <div className="font-black text-lg">Smena boshqaruvi</div>
-        <button onClick={() => setActiveModal(null)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">✕</button>
-      </div>
-      {shift ? (
-  <>
-    <div className="bg-green-50 border-2 border-green-400 rounded-xl p-4 mb-4">
-      <div className="font-black text-green-700 text-base">✅ Smena ochiq</div>
-      <div className="text-sm text-gray-500 mt-1">
-        Boshlangan: {new Date(shift.opened_at).toLocaleTimeString('uz-UZ', {hour:'2-digit', minute:'2-digit'})}
-      </div>
-    </div>
-    <button onClick={closeShift} disabled={loading}
-      className="w-full py-4 rounded-xl font-black text-base text-white disabled:opacity-50"
-      style={{backgroundColor: '#B83232'}}>
-      {loading ? '...' : '🔴 Smena yopish'}
-    </button>
-  </>
-) : (
-  <>
-    <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4 mb-4">
-      <div className="font-black text-red-600 text-base">⭕ Smena yopiq</div>
-    </div>
-    <button onClick={openShift} disabled={loading}
-      className="w-full py-4 rounded-xl font-black text-base text-white disabled:opacity-50"
-      style={{backgroundColor: '#1E7B47'}}>
-      {loading ? '...' : '🟢 Smena ochish'}
-    </button>
-  </>
-)}
-    </div>
-  </div>
-)}
+      {activeModal === 'smena' && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center">
+          <div className="bg-white rounded-t-3xl p-6 w-full max-w-md">
+            <div className="flex justify-between items-center mb-6">
+              <div className="font-black text-lg">Smena boshqaruvi</div>
+              <button onClick={() => setActiveModal(null)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">✕</button>
+            </div>
+            {shift ? (
+              <>
+                <div className="bg-green-50 border-2 border-green-400 rounded-xl p-4 mb-4">
+                  <div className="font-black text-green-700 text-base">✅ Smena ochiq</div>
+                  <div className="text-sm text-gray-500 mt-1">
+                    Boshlangan: {new Date(shift.opened_at).toLocaleTimeString('uz-UZ', {hour:'2-digit', minute:'2-digit'})}
+                  </div>
+                </div>
+                <button onClick={closeShift} disabled={loading}
+                  className="w-full py-4 rounded-xl font-black text-base text-white disabled:opacity-50"
+                  style={{backgroundColor: '#B83232'}}>
+                  {loading ? '...' : '🔴 Smena yopish'}
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4 mb-4">
+                  <div className="font-black text-red-600 text-base">⭕ Smena yopiq</div>
+                </div>
+                <button onClick={openShift} disabled={loading}
+                  className="w-full py-4 rounded-xl font-black text-base text-white disabled:opacity-50"
+                  style={{backgroundColor: '#1E7B47'}}>
+                  {loading ? '...' : '🟢 Smena ochish'}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* TO'LOV MODAL */}
       {activeModal === 'pay' && (
@@ -471,9 +622,29 @@ export default function CashierPage() {
               <option value="">Mahsulot tanlang</option>
               {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
-            <input type="number" placeholder="Miqdor" value={qty}
-              onChange={e => setQty(e.target.value)}
-              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-4 outline-none focus:border-[#C8860A]"/>
+
+            {selectedProd && products.find(p => p.id === selectedProd)?.unit_type === 'hissa' ? (
+              <div>
+                <input type="number" placeholder="Miqdor (kg)" value={qty}
+                  onChange={e => setQty(e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-2 outline-none focus:border-[#C8860A]"/>
+                {qty && parseFloat(qty) > 0 && (
+                  <div className="bg-[#FFF8E7] border border-[#F5C842] rounded-xl px-4 py-3 text-sm mb-3">
+                    <div className="font-bold text-[#C8860A] mb-1">{parseFloat(qty)} kg kirim:</div>
+                    <div className="flex gap-4">
+                      <span className="text-gray-600">Hissa: <b>{Math.round(parseFloat(qty) * 21)}</b></span>
+                      <span className="text-green-600">Butun: <b>{Math.floor(parseFloat(qty) * 7)}</b></span>
+                      <span className="text-blue-600">Yarim: <b>{Math.floor(parseFloat(qty) * 21 / 2)}</b></span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <input type="number" placeholder="Miqdor (dona)" value={qty}
+                onChange={e => setQty(e.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-4 outline-none focus:border-[#C8860A]"/>
+            )}
+
             <button onClick={confirmKirim} disabled={loading || !selectedProd || !qty}
               className="w-full py-4 rounded-xl bg-[#1E7B47] text-white font-black text-base disabled:opacity-50">
               {loading ? '...' : '✓ Kirim qilish'}
