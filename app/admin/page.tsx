@@ -3,32 +3,36 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import jsPDF from 'jspdf'
-import { Clock, UtensilsCrossed, Users, BarChart3, LogOut } from 'lucide-react'
+import { Clock, UtensilsCrossed, Users, BarChart3, LogOut, PackagePlus, PackageMinus } from 'lucide-react'
 
 type User = { id: string; name: string; role: string }
 type Category = { id: string; name: string; order_num: number }
 type Product = { id: string; name: string; price: number; category_id: string; is_available: boolean }
-type Shift = { id: string; is_open: boolean; opened_at: string }
+type Shift = { id: string; is_open: boolean; opened_at: string; closed_at?: string; opened_by?: string; closed_by?: string }
 type ShiftStock = { product_id: string; initial_qty: number }
-type Order = { id: string; total: number; pay_type: string; debt_paid: boolean; debtor_name: string | null }
+type Order = { id: string; total: number; pay_type: string; debt_paid: boolean; debtor_name: string | null; worker_id: string; created_at: string }
+type OrderItem = { order_id: string; product_id: string; qty: number; price: number }
 type Worker = { id: string; name: string; pin: string; role: string }
+type WriteOff = { id: string; product_id: string; qty: number; reason: string; worker_id: string; created_at: string }
+type StockIn = { id: string; product_id: string; qty: number; worker_id: string; created_at: string }
 
 type Tab = 'smena' | 'mahsulot' | 'xodim' | 'hisobot'
 
 export default function AdminPage() {
   const router = useRouter()
   const [user, setUser] = useState<User | null>(null)
-  const [activeTab, setActiveTab] = useState<Tab>('smena')
+  const [activeTab, setActiveTab] = useState<Tab>('hisobot')
 
-  // Data
   const [categories, setCategories] = useState<Category[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [shift, setShift] = useState<Shift | null>(null)
   const [stocks, setStocks] = useState<ShiftStock[]>([])
   const [orders, setOrders] = useState<Order[]>([])
+  const [orderItems, setOrderItems] = useState<OrderItem[]>([])
   const [workers, setWorkers] = useState<Worker[]>([])
+  const [writeOffs, setWriteOffs] = useState<WriteOff[]>([])
+  const [stockIns, setStockIns] = useState<StockIn[]>([])
 
-  // Forms
   const [newCatName, setNewCatName] = useState('')
   const [newProdName, setNewProdName] = useState('')
   const [newProdPrice, setNewProdPrice] = useState('')
@@ -54,236 +58,219 @@ export default function AdminPage() {
       { data: prods },
       { data: shifts },
       { data: ords },
+      { data: oi },
       { data: wrks },
+      { data: wo },
+      { data: si },
     ] = await Promise.all([
       supabase.from('categories').select('*').order('order_num'),
       supabase.from('products').select('*').order('created_at'),
-      supabase.from('shifts').select('*').eq('is_open', true).single(),
+      supabase.from('shifts').select('*').order('opened_at', { ascending: false }).limit(1).single(),
       supabase.from('orders').select('*').order('created_at', { ascending: false }),
+      supabase.from('order_items').select('*'),
       supabase.from('users').select('*').eq('role', 'worker'),
+      supabase.from('write_offs').select('*').order('created_at', { ascending: false }),
+      supabase.from('stock_ins').select('*').order('created_at', { ascending: false }),
     ])
     setCategories(cats || [])
     setProducts(prods || [])
     setShift(shifts || null)
     setOrders(ords || [])
+    setOrderItems(oi || [])
     setWorkers(wrks || [])
+    setWriteOffs(wo || [])
+    setStockIns(si || [])
 
     if (shifts?.id) {
-      const { data: st } = await supabase
-        .from('shift_stock')
-        .select('*')
-        .eq('shift_id', shifts.id)
+      const { data: st } = await supabase.from('shift_stock').select('*').eq('shift_id', shifts.id)
       setStocks(st || [])
     }
   }
 
-  const showToast = (msg: string) => {
-    setToast(msg); setTimeout(() => setToast(''), 2500)
-  }
-
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 2500) }
   const fmt = (n: number) => n.toLocaleString('uz-UZ')
 
-  // SMENA
-  const openShift = async () => {
-    setLoading(true)
-    const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
-    const { data } = await supabase
-      .from('shifts')
-      .insert({ opened_by: u.id, is_open: true })
-      .select().single()
-    if (data) {
-      // stock yozuvlarini yaratish
-      const stockRows = products.map(p => ({
-        shift_id: data.id,
-        product_id: p.id,
-        initial_qty: 0,
-      }))
-      await supabase.from('shift_stock').insert(stockRows)
-      setShift(data)
-      setStocks(stockRows)
-      showToast('✅ Smena ochildi!')
-    }
-    setLoading(false)
-  }
+  // Yordamchi funksiyalar
+  const workerName = (id: string) => workers.find(w => w.id === id)?.name || 'Noma\'lum'
+  const productName = (id: string) => products.find(p => p.id === id)?.name || 'Noma\'lum'
 
-  const closeShift = async () => {
-    if (!shift) return
-    setLoading(true)
-    await supabase.from('shifts')
-      .update({ is_open: false, closed_at: new Date().toISOString() })
-      .eq('id', shift.id)
-    setShift(null)
-    setStocks([])
-    showToast('Smena yopildi')
-    setLoading(false)
+  // Smena
+  const toggleAvail = async (p: Product) => {
+    await supabase.from('products').update({ is_available: !p.is_available }).eq('id', p.id)
+    setProducts(prev => prev.map(x => x.id === p.id ? { ...x, is_available: !x.is_available } : x))
   }
 
   const updateStock = async (productId: string, qty: number) => {
     if (!shift) return
-    setStocks(prev => prev.map(s =>
-      s.product_id === productId ? { ...s, initial_qty: qty } : s
-    ))
-    await supabase.from('shift_stock')
-      .update({ initial_qty: qty })
-      .eq('shift_id', shift.id)
-      .eq('product_id', productId)
+    setStocks(prev => prev.map(s => s.product_id === productId ? { ...s, initial_qty: qty } : s))
+    await supabase.from('shift_stock').update({ initial_qty: qty }).eq('shift_id', shift.id).eq('product_id', productId)
   }
 
-  const toggleAvail = async (p: Product) => {
-    await supabase.from('products')
-      .update({ is_available: !p.is_available })
-      .eq('id', p.id)
-    setProducts(prev => prev.map(x => x.id === p.id ? { ...x, is_available: !x.is_available } : x))
-  }
-
-  // KATEGORIYA
+  // Kategoriya
   const addCategory = async () => {
     if (!newCatName.trim()) return
-    const { data } = await supabase.from('categories')
-      .insert({ name: newCatName.trim(), order_num: categories.length + 1 })
-      .select().single()
+    const { data } = await supabase.from('categories').insert({ name: newCatName.trim(), order_num: categories.length + 1 }).select().single()
     if (data) { setCategories(p => [...p, data]); setNewCatName(''); showToast('✅ Kategoriya qo\'shildi!') }
   }
 
   const deleteCategory = async (id: string) => {
     await supabase.from('categories').delete().eq('id', id)
     setCategories(p => p.filter(c => c.id !== id))
-    showToast('O\'chirildi')
   }
 
-  // MAHSULOT
+  // Mahsulot
   const addProduct = async () => {
     if (!newProdName.trim() || !newProdPrice || !newProdCat) return
-    const { data } = await supabase.from('products')
-      .insert({ name: newProdName.trim(), price: parseInt(newProdPrice), category_id: newProdCat, is_available: true })
-      .select().single()
-    if (data) {
-      setProducts(p => [...p, data])
-      setNewProdName(''); setNewProdPrice(''); setNewProdCat('')
-      showToast('✅ Mahsulot qo\'shildi!')
-    }
+    const { data } = await supabase.from('products').insert({ name: newProdName.trim(), price: parseInt(newProdPrice), category_id: newProdCat, is_available: true }).select().single()
+    if (data) { setProducts(p => [...p, data]); setNewProdName(''); setNewProdPrice(''); setNewProdCat(''); showToast('✅ Mahsulot qo\'shildi!') }
   }
 
   const deleteProduct = async (id: string) => {
     await supabase.from('products').delete().eq('id', id)
     setProducts(p => p.filter(x => x.id !== id))
-    showToast('O\'chirildi')
   }
 
-  // XODIM
+  // Xodim
   const addWorker = async () => {
     if (!newWorkerName.trim() || newWorkerPin.length !== 4) return
-    const { data } = await supabase.from('users')
-      .insert({ name: newWorkerName.trim(), pin: newWorkerPin, role: 'worker' })
-      .select().single()
-    if (data) {
-      setWorkers(p => [...p, data])
-      setNewWorkerName(''); setNewWorkerPin('')
-      showToast('✅ Xodim qo\'shildi!')
-    }
+    const { data } = await supabase.from('users').insert({ name: newWorkerName.trim(), pin: newWorkerPin, role: 'worker' }).select().single()
+    if (data) { setWorkers(p => [...p, data]); setNewWorkerName(''); setNewWorkerPin(''); showToast('✅ Xodim qo\'shildi!') }
   }
 
   const deleteWorker = async (id: string) => {
     await supabase.from('users').delete().eq('id', id)
     setWorkers(p => p.filter(x => x.id !== id))
-    showToast('O\'chirildi')
   }
 
-  // HISOBOT
-  const todayOrders = orders
-  const totalRev = todayOrders.reduce((s, o) => s + o.total, 0)
-  const cashRev = todayOrders.reduce((s, o) => s + (o.pay_type === 'naqd' ? o.total : 0), 0)
-  const cardRev = todayOrders.reduce((s, o) => s + (o.pay_type === 'karta' ? o.total : 0), 0)
-  const clickRev = todayOrders.reduce((s, o) => s + (o.pay_type === 'click' ? o.total : 0), 0)
-  const debtRev = todayOrders.reduce((s, o) => s + (o.pay_type === 'qarz' ? o.total : 0), 0)
-  const activeDebts = todayOrders.filter(o => o.pay_type === 'qarz' && !o.debt_paid)
+  // Hisobot hisob-kitobi
+  const shiftOrders = shift ? orders.filter(o => {
+    const oDate = new Date(o.created_at)
+    const sDate = new Date(shift.opened_at)
+    return oDate >= sDate
+  }) : orders
+
+  const totalRev = shiftOrders.filter(o => o.pay_type !== 'ichki').reduce((s, o) => s + o.total, 0)
+  const cashRev = shiftOrders.reduce((s, o) => s + (o.pay_type === 'naqd' ? o.total : 0), 0)
+  const cardRev = shiftOrders.reduce((s, o) => s + (o.pay_type === 'karta' ? o.total : 0), 0)
+  const clickRev = shiftOrders.reduce((s, o) => s + (o.pay_type === 'click' ? o.total : 0), 0)
+  const debtRev = shiftOrders.reduce((s, o) => s + (o.pay_type === 'qarz' ? o.total : 0), 0)
+  const ichkiOrders = shiftOrders.filter(o => o.pay_type === 'ichki')
+  const activeDebts = shiftOrders.filter(o => o.pay_type === 'qarz' && !o.debt_paid)
+
+  // Har mahsulotdan nechta sotildi
+  const soldByProduct = products.map(p => {
+    const shiftOrderIds = shiftOrders.map(o => o.id)
+    const sold = orderItems
+      .filter(oi => oi.product_id === p.id && shiftOrderIds.includes(oi.order_id))
+      .reduce((s, oi) => s + oi.qty, 0)
+    const stock = stocks.find(s => s.product_id === p.id)
+    const writeOff = writeOffs.filter(w => w.product_id === p.id && shift && new Date(w.created_at) >= new Date(shift.opened_at)).reduce((s, w) => s + w.qty, 0)
+    const stockIn = stockIns.filter(si => si.product_id === p.id && shift && new Date(si.created_at) >= new Date(shift.opened_at)).reduce((s, si) => s + si.qty, 0)
+    const remaining = (stock?.initial_qty || 0) + stockIn - sold - writeOff
+    return { ...p, sold, writeOff, stockIn, remaining, initial: stock?.initial_qty || 0 }
+  }).filter(p => p.sold > 0 || p.writeOff > 0 || p.stockIn > 0 || p.initial > 0)
 
   const payDebt = async (orderId: string) => {
     await supabase.from('orders').update({ debt_paid: true }).eq('id', orderId)
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, debt_paid: true } : o))
     showToast('✅ Qarz yopildi!')
   }
+
+  // PDF
   const generatePDF = () => {
-  const doc = new jsPDF()
+    const doc = new jsPDF()
+    let y = 20
 
-  // Sarlavha
-  doc.setFontSize(20)
-  doc.setFont('helvetica', 'bold')
-  doc.text('EA MURUNTOV - Kunlik Hisobot', 105, 20, { align: 'center' })
+    doc.setFontSize(18); doc.setFont('helvetica', 'bold')
+    doc.text('EA MURUNTOV - Smena Hisoboti', 105, y, { align: 'center' }); y += 10
 
-  doc.setFontSize(11)
-  doc.setFont('helvetica', 'normal')
-  doc.text(`Sana: ${new Date().toLocaleDateString('ru-RU')}`, 105, 30, { align: 'center' })
+    doc.setFontSize(10); doc.setFont('helvetica', 'normal')
+    doc.text(`Sana: ${new Date().toLocaleDateString('ru-RU')}`, 105, y, { align: 'center' }); y += 6
+    if (shift) {
+      doc.text(`Smena boshlangan: ${new Date(shift.opened_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`, 105, y, { align: 'center' })
+      y += 6
+      if (shift.opened_by) { doc.text(`Kim ochdi: ${workerName(shift.opened_by)}`, 105, y, { align: 'center' }); y += 6 }
+    }
 
-  // Chiziq
-  doc.setLineWidth(0.5)
-  doc.line(20, 35, 190, 35)
+    doc.setLineWidth(0.5); doc.line(20, y, 190, y); y += 8
 
-  // Statistika
-  doc.setFontSize(13)
-  doc.setFont('helvetica', 'bold')
-  doc.text('Umumiy statistika:', 20, 45)
+    // Statistika
+    doc.setFontSize(12); doc.setFont('helvetica', 'bold')
+    doc.text('Moliyaviy ko\'rsatkichlar:', 20, y); y += 8
+    doc.setFontSize(10); doc.setFont('helvetica', 'normal')
+    const stats = [
+      ['Jami buyurtmalar:', `${shiftOrders.length} ta`],
+      ['Jami tushum:', `${fmt(totalRev)} som`],
+      ['Naqd:', `${fmt(cashRev)} som`],
+      ['Click:', `${fmt(clickRev)} som`],
+      ['Karta:', `${fmt(cardRev)} som`],
+      ['Qarz:', `${fmt(debtRev)} som`],
+      ['Ichki iste\'mol:', `${ichkiOrders.length} ta buyurtma`],
+    ]
+    stats.forEach(([l, v]) => { doc.text(l, 25, y); doc.text(v, 140, y); y += 7 })
 
-  doc.setFontSize(11)
-  doc.setFont('helvetica', 'normal')
-  const stats = [
-    [`Jami buyurtmalar:`, `${todayOrders.length} ta`],
-    [`Jami tushum:`, `${fmt(totalRev)} som`],
-    [`Naqd:`, `${fmt(cashRev)} som`],
-    [`Karta:`, `${fmt(cardRev)} som`],
-    [`Qarz:`, `${fmt(debtRev)} som`],
-    [`Faol qarzlar:`, `${activeDebts.length} ta`],
-  ]
-  stats.forEach(([label, val], i) => {
-    doc.text(label, 25, 55 + i * 8)
-    doc.text(val, 140, 55 + i * 8)
-  })
+    y += 4; doc.line(20, y, 190, y); y += 8
 
-  // Chiziq
-  doc.line(20, 107, 190, 107)
+    // Mahsulot hisobi
+    doc.setFontSize(12); doc.setFont('helvetica', 'bold')
+    doc.text('Mahsulot hisobi:', 20, y); y += 8
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal')
+    doc.text('Mahsulot', 20, y); doc.text('Boshl.', 90, y); doc.text('Kirim', 110, y)
+    doc.text('Sotildi', 130, y); doc.text('Chiqim', 150, y); doc.text('Qoldiq', 170, y); y += 6
 
-  // Qarzdorlar
-  if (activeDebts.length > 0) {
-    doc.setFontSize(13)
-    doc.setFont('helvetica', 'bold')
-    doc.text('Qarzdorlar:', 20, 117)
-
-    doc.setFontSize(11)
-    doc.setFont('helvetica', 'normal')
-    activeDebts.forEach((o, i) => {
-      doc.text(`${i + 1}. ${o.debtor_name || "Noma'lum"}`, 25, 127 + i * 8)
-      doc.text(`${fmt(o.total)} som`, 140, 127 + i * 8)
+    soldByProduct.forEach(p => {
+      if (y > 270) { doc.addPage(); y = 20 }
+      doc.text(p.name.slice(0, 30), 20, y)
+      doc.text(String(p.initial), 90, y)
+      doc.text(String(p.stockIn), 110, y)
+      doc.text(String(p.sold), 130, y)
+      doc.text(String(p.writeOff), 150, y)
+      doc.text(String(p.remaining), 170, y)
+      y += 6
     })
+
+    // Chiqimlar
+    if (writeOffs.length > 0) {
+      y += 4; doc.line(20, y, 190, y); y += 8
+      doc.setFontSize(12); doc.setFont('helvetica', 'bold')
+      doc.text('Chiqimlar:', 20, y); y += 8
+      doc.setFontSize(9); doc.setFont('helvetica', 'normal')
+      writeOffs.slice(0, 10).forEach(w => {
+        if (y > 270) { doc.addPage(); y = 20 }
+        doc.text(`${productName(w.product_id)} — ${w.qty} ta`, 25, y)
+        doc.text(`${workerName(w.worker_id)}: ${w.reason}`, 100, y)
+        y += 6
+      })
+    }
+
+    // Kirimlar
+    if (stockIns.length > 0) {
+      y += 4; doc.line(20, y, 190, y); y += 8
+      doc.setFontSize(12); doc.setFont('helvetica', 'bold')
+      doc.text('Kirimlar:', 20, y); y += 8
+      doc.setFontSize(9); doc.setFont('helvetica', 'normal')
+      stockIns.slice(0, 10).forEach(si => {
+        if (y > 270) { doc.addPage(); y = 20 }
+        doc.text(`${productName(si.product_id)} — ${si.qty} ta`, 25, y)
+        doc.text(`Kim: ${workerName(si.worker_id)}`, 120, y)
+        y += 6
+      })
+    }
+
+    // Footer
+    doc.setFontSize(8); doc.setTextColor(150)
+    doc.text('Zarafshon Dasturchilari | EA Muruntov POS', 105, 285, { align: 'center' })
+
+    doc.save(`ea-muruntov-${new Date().toLocaleDateString('ru-RU').replace(/\./g, '-')}.pdf`)
+    showToast('✅ PDF yuklab olindi!')
   }
 
-  // Buyurtmalar
-  const startY = activeDebts.length > 0 ? 130 + activeDebts.length * 8 : 117
-  doc.setFontSize(13)
-  doc.setFont('helvetica', 'bold')
-  doc.text("So'nggi buyurtmalar:", 20, startY)
-
-  doc.setFontSize(10)
-  doc.setFont('helvetica', 'normal')
-  todayOrders.slice(0, 15).forEach((o, i) => {
-    const payLabel = o.pay_type === 'naqd' ? 'Naqd' : o.pay_type === 'karta' ? 'Karta' : `Qarz (${o.debtor_name})`
-    doc.text(`${i + 1}. ${fmt(o.total)} som — ${payLabel}`, 25, startY + 10 + i * 7)
-  })
-
-  // Footer
-  doc.setFontSize(9)
-  doc.setTextColor(150)
-  doc.text('Zarafshon Dasturchilari | EA Muruntov POS', 105, 285, { align: 'center' })
-
-  doc.save(`ea-muruntov-hisobot-${new Date().toLocaleDateString('ru-RU').replace(/\./g, '-')}.pdf`)
-  showToast('✅ PDF yuklab olindi!')
-}
-
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-  { id: 'smena', label: 'Smena', icon: <Clock size={16}/> },
-  { id: 'mahsulot', label: 'Menyu', icon: <UtensilsCrossed size={16}/> },
-  { id: 'xodim', label: 'Xodimlar', icon: <Users size={16}/> },
-  { id: 'hisobot', label: 'Hisobot', icon: <BarChart3 size={16}/> },
-]
+    { id: 'hisobot', label: 'Hisobot', icon: <BarChart3 size={16}/> },
+    { id: 'smena', label: 'Smena', icon: <Clock size={16}/> },
+    { id: 'mahsulot', label: 'Menyu', icon: <UtensilsCrossed size={16}/> },
+    { id: 'xodim', label: 'Xodimlar', icon: <Users size={16}/> },
+  ]
 
   return (
     <div className="min-h-screen bg-[#F5F3EE]">
@@ -292,56 +279,218 @@ export default function AdminPage() {
       <div className="bg-[#1C1407] px-6 py-3 flex items-center justify-between sticky top-0 z-40">
         <div>
           <div className="text-[#F5C842] font-black tracking-widest text-base">EA MURUNTOV</div>
-          <div className="text-gray-500 text-xs mt-0.5">{user?.name} · Admin</div>
+          <div className="text-gray-500 text-xs mt-0.5">{user?.name} · Rahbar</div>
         </div>
         <div className="flex items-center gap-3">
-          <div className={`px-3 py-1 rounded-full text-xs font-bold ${shift ? 'bg-green-900/40 text-green-400' : 'bg-gray-800 text-gray-500'}`}>
-            {shift ? '● Smena ochiq' : '○ Smena yopiq'}
+          <div className={`px-3 py-1 rounded-full text-xs font-bold ${shift?.is_open ? 'bg-green-900/40 text-green-400' : 'bg-gray-800 text-gray-500'}`}>
+            {shift?.is_open ? '● Smena ochiq' : '○ Smena yopiq'}
           </div>
           <button onClick={() => { localStorage.removeItem('pos_user'); router.push('/') }}
-  className="border border-gray-600 text-gray-400 rounded-lg px-3 py-1.5 text-xs hover:border-gray-400 transition-all flex items-center gap-1.5">
-  <LogOut size={14}/> Chiqish
-</button>
+            className="border border-gray-600 text-gray-400 rounded-lg px-3 py-1.5 text-xs flex items-center gap-1.5">
+            <LogOut size={14}/> Chiqish
+          </button>
         </div>
       </div>
 
       {/* TABLAR */}
       <div className="bg-white border-b border-gray-200 px-4 flex gap-1 sticky top-[52px] z-30">
         {tabs.map(t => (
-  <button key={t.id} onClick={() => setActiveTab(t.id)}
-    className={`flex items-center gap-1.5 px-5 py-3 text-sm font-bold border-b-2 transition-all ${activeTab === t.id ? 'border-[#C8860A] text-[#C8860A]' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
-    {t.icon} {t.label}
-  </button>
-))}
+          <button key={t.id} onClick={() => setActiveTab(t.id)}
+            className={`flex items-center gap-1.5 px-5 py-3 text-sm font-bold border-b-2 transition-all ${activeTab === t.id ? 'border-[#C8860A] text-[#C8860A]' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+            {t.icon} {t.label}
+          </button>
+        ))}
       </div>
 
       <div className="max-w-3xl mx-auto p-4">
 
+        {/* ===== HISOBOT TAB ===== */}
+        {activeTab === 'hisobot' && (
+          <div className="space-y-4">
+
+            {/* Smena ma'lumoti */}
+            {shift && (
+              <div className="bg-white rounded-2xl border border-gray-200 p-4">
+                <div className="font-black text-base mb-3">📋 Smena ma'lumoti</div>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="text-gray-400">Holat:</div>
+                  <div className={`font-bold ${shift.is_open ? 'text-green-600' : 'text-gray-500'}`}>
+                    {shift.is_open ? '● Ochiq' : '○ Yopiq'}
+                  </div>
+                  <div className="text-gray-400">Ochdi:</div>
+                  <div className="font-bold">{shift.opened_by ? workerName(shift.opened_by) : '—'}</div>
+                  <div className="text-gray-400">Ochildi:</div>
+                  <div className="font-bold">{new Date(shift.opened_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}</div>
+                  {shift.closed_at && <>
+                    <div className="text-gray-400">Yopdi:</div>
+                    <div className="font-bold">{shift.closed_by ? workerName(shift.closed_by) : '—'}</div>
+                    <div className="text-gray-400">Yopildi:</div>
+                    <div className="font-bold">{new Date(shift.closed_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}</div>
+                  </>}
+                </div>
+              </div>
+            )}
+
+            {/* Moliyaviy statistika */}
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { label: 'Jami tushum', val: fmt(totalRev) + ' so\'m', color: 'text-[#C8860A]' },
+                { label: 'Buyurtmalar', val: shiftOrders.length + ' ta', color: 'text-[#1A1208]' },
+                { label: 'Naqd', val: fmt(cashRev) + ' so\'m', color: 'text-[#1E7B47]' },
+                { label: 'Click', val: fmt(clickRev) + ' so\'m', color: 'text-purple-600' },
+                { label: 'Karta', val: fmt(cardRev) + ' so\'m', color: 'text-blue-600' },
+                { label: 'Qarz', val: fmt(debtRev) + ' so\'m', color: 'text-[#B83232]' },
+                { label: 'Ichki iste\'mol', val: ichkiOrders.length + ' ta', color: 'text-orange-500' },
+                { label: 'Faol qarzlar', val: activeDebts.length + ' ta', color: 'text-[#B83232]' },
+              ].map((s, i) => (
+                <div key={i} className="bg-white rounded-2xl border border-gray-200 p-4">
+                  <div className="text-xs text-gray-400 font-bold mb-1">{s.label}</div>
+                  <div className={`font-black text-lg ${s.color}`}>{s.val}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Mahsulot hisobi */}
+            {soldByProduct.length > 0 && (
+              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                <div className="px-5 py-3 border-b border-gray-100 font-black text-base">📦 Mahsulot hisobi</div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50">
+                        <th className="text-left px-4 py-2 font-bold text-gray-400 text-xs">Mahsulot</th>
+                        <th className="text-center px-2 py-2 font-bold text-gray-400 text-xs">Boshl.</th>
+                        <th className="text-center px-2 py-2 font-bold text-gray-400 text-xs">Kirim</th>
+                        <th className="text-center px-2 py-2 font-bold text-gray-400 text-xs">Sotildi</th>
+                        <th className="text-center px-2 py-2 font-bold text-gray-400 text-xs">Chiqim</th>
+                        <th className="text-center px-2 py-2 font-bold text-gray-400 text-xs">Qoldiq</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {soldByProduct.map(p => (
+                        <tr key={p.id}>
+                          <td className="px-4 py-2 font-bold text-sm">{p.name}</td>
+                          <td className="px-2 py-2 text-center text-gray-500">{p.initial}</td>
+                          <td className="px-2 py-2 text-center text-green-600 font-bold">{p.stockIn > 0 ? `+${p.stockIn}` : '—'}</td>
+                          <td className="px-2 py-2 text-center text-[#C8860A] font-bold">{p.sold > 0 ? p.sold : '—'}</td>
+                          <td className="px-2 py-2 text-center text-red-500 font-bold">{p.writeOff > 0 ? p.writeOff : '—'}</td>
+                          <td className={`px-2 py-2 text-center font-black ${p.remaining < 0 ? 'text-red-600' : 'text-[#1A1208]'}`}>{p.remaining}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Ichki iste'mol */}
+            {ichkiOrders.length > 0 && (
+              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                <div className="px-5 py-3 border-b border-gray-100 font-black text-base text-orange-500">🍽 Ichki iste'mol</div>
+                <div className="divide-y divide-gray-50">
+                  {ichkiOrders.map(o => {
+                    const items = orderItems.filter(oi => oi.order_id === o.id)
+                    return (
+                      <div key={o.id} className="px-5 py-3">
+                        <div className="flex justify-between items-center">
+                          <div className="font-bold text-sm">{workerName(o.worker_id)}</div>
+                          <div className="text-xs text-gray-400">{new Date(o.created_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}</div>
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {items.map(i => `${productName(i.product_id)} × ${i.qty}`).join(', ')}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Chiqimlar */}
+            {writeOffs.length > 0 && (
+              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                <div className="px-5 py-3 border-b border-gray-100 font-black text-base text-[#B83232] flex items-center gap-2">
+                  <PackageMinus size={16}/> Chiqimlar
+                </div>
+                <div className="divide-y divide-gray-50">
+                  {writeOffs.map(w => (
+                    <div key={w.id} className="px-5 py-3">
+                      <div className="flex justify-between items-center">
+                        <div className="font-bold text-sm">{productName(w.product_id)} — {w.qty} ta</div>
+                        <div className="text-xs text-gray-400">{workerName(w.worker_id)}</div>
+                      </div>
+                      <div className="text-xs text-gray-500 mt-0.5 italic">"{w.reason}"</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Kirimlar */}
+            {stockIns.length > 0 && (
+              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                <div className="px-5 py-3 border-b border-gray-100 font-black text-base text-[#1E7B47] flex items-center gap-2">
+                  <PackagePlus size={16}/> Kirimlar
+                </div>
+                <div className="divide-y divide-gray-50">
+                  {stockIns.map(si => (
+                    <div key={si.id} className="flex items-center gap-3 px-5 py-3">
+                      <div className="flex-1">
+                        <div className="font-bold text-sm">{productName(si.product_id)} — {si.qty} ta</div>
+                        <div className="text-xs text-gray-400">{workerName(si.worker_id)}</div>
+                      </div>
+                      <div className="text-xs text-gray-400">
+                        {new Date(si.created_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Qarzdorlar */}
+            {activeDebts.length > 0 && (
+              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                <div className="px-5 py-3 border-b border-gray-100 font-black text-base text-[#B83232]">Qarzdorlar</div>
+                <div className="divide-y divide-gray-50">
+                  {activeDebts.map(o => (
+                    <div key={o.id} className="flex items-center gap-3 px-5 py-3">
+                      <div className="flex-1">
+                        <div className="font-bold text-sm">{o.debtor_name || "Noma'lum"}</div>
+                        <div className="text-xs text-gray-400">{fmt(o.total)} so'm</div>
+                      </div>
+                      <button onClick={() => payDebt(o.id)}
+                        className="px-4 py-2 bg-[#1E7B47] text-white rounded-xl text-xs font-black">
+                        To'landi
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* PDF */}
+            <button onClick={generatePDF}
+              className="w-full py-4 bg-[#1A1208] text-[#F5C842] rounded-2xl font-black text-base hover:bg-[#2C200A] transition-all">
+              📄 PDF hisobot yuklab olish
+            </button>
+          </div>
+        )}
+
         {/* ===== SMENA TAB ===== */}
         {activeTab === 'smena' && (
           <div className="space-y-4">
-            {/* Smena holati */}
-            <div className={`rounded-2xl p-5 border-2 ${shift ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-black text-lg">{shift ? 'Smena ochiq' : 'Smena yopiq'}</div>
-                  <div className="text-sm text-gray-500 mt-1">
-                    {shift ? `Boshlangan: ${new Date(shift.opened_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}` : 'Smena hali boshlanmagan'}
-                  </div>
-                </div>
-                <button onClick={shift ? closeShift : openShift} disabled={loading}
-                  className={`px-6 py-3 rounded-xl font-black text-sm transition-all disabled:opacity-50 ${shift ? 'bg-[#B83232] text-white hover:bg-red-700' : 'bg-[#1E7B47] text-white hover:bg-green-700'}`}>
-                  {loading ? '...' : shift ? 'Yopish' : 'Ochish'}
-                </button>
+            <div className={`rounded-2xl p-5 border-2 ${shift?.is_open ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
+              <div className="font-black text-lg mb-1">{shift?.is_open ? 'Smena ochiq' : 'Smena yopiq'}</div>
+              <div className="text-sm text-gray-500">
+                {shift ? `Boshlangan: ${new Date(shift.opened_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}` : 'Smena kassir tomonidan ochiladi'}
               </div>
             </div>
 
-            {/* Sklad - mahsulot miqdori */}
             {shift && (
               <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
                 <div className="px-5 py-3 border-b border-gray-100">
                   <div className="font-black text-base">Boshlang'ich miqdor</div>
-                  <div className="text-xs text-gray-400 mt-0.5">Smena boshidagi mahsulot soni</div>
                 </div>
                 <div className="divide-y divide-gray-50">
                   {products.map(p => {
@@ -353,15 +502,12 @@ export default function AdminPage() {
                           <div className="text-xs text-gray-400">{fmt(p.price)} so'm</div>
                         </div>
                         <button onClick={() => toggleAvail(p)}
-                          className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${p.is_available ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                          className={`px-3 py-1 rounded-full text-xs font-bold ${p.is_available ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                           {p.is_available ? 'Bor' : "Yo'q"}
                         </button>
-                        <input
-                          type="number" min="0"
-                          value={st?.initial_qty || 0}
+                        <input type="number" min="0" value={st?.initial_qty || 0}
                           onChange={e => updateStock(p.id, parseInt(e.target.value) || 0)}
-                          className="w-16 border border-gray-200 rounded-lg px-2 py-1.5 text-center text-sm font-bold outline-none focus:border-[#C8860A]"
-                        />
+                          className="w-16 border border-gray-200 rounded-lg px-2 py-1.5 text-center text-sm font-bold outline-none focus:border-[#C8860A]"/>
                       </div>
                     )
                   })}
@@ -374,40 +520,34 @@ export default function AdminPage() {
         {/* ===== MENYU TAB ===== */}
         {activeTab === 'mahsulot' && (
           <div className="space-y-4">
-
-            {/* Kategoriya qo'shish */}
             <div className="bg-white rounded-2xl border border-gray-200 p-5">
               <div className="font-black text-base mb-3">Kategoriya qo'shish</div>
               <div className="flex gap-2">
-                <input value={newCatName} onChange={e => setNewCatName(e.target.value)}
-                  placeholder="Kategoriya nomi"
-                  className="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C8860A]" />
+                <input value={newCatName} onChange={e => setNewCatName(e.target.value)} placeholder="Kategoriya nomi"
+                  className="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
                 <button onClick={addCategory}
-                  className="px-5 py-2.5 bg-[#C8860A] text-[#1A1208] rounded-xl font-black text-sm hover:bg-[#F5C842] transition-all">
+                  className="px-5 py-2.5 bg-[#C8860A] text-[#1A1208] rounded-xl font-black text-sm hover:bg-[#F5C842]">
                   Qo'shish
                 </button>
               </div>
               <div className="flex flex-wrap gap-2 mt-3">
                 {categories.map(c => (
                   <div key={c.id} className="flex items-center gap-1.5 bg-[#FFF8E7] border border-[#F5C842] rounded-full px-3 py-1">
-                    <span className="text-sm font-bold text-[#1A1208]">{c.name}</span>
-                    <button onClick={() => deleteCategory(c.id)} className="text-gray-400 hover:text-red-500 text-xs font-bold">✕</button>
+                    <span className="text-sm font-bold">{c.name}</span>
+                    <button onClick={() => deleteCategory(c.id)} className="text-gray-400 hover:text-red-500 text-xs">✕</button>
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* Mahsulot qo'shish */}
             <div className="bg-white rounded-2xl border border-gray-200 p-5">
               <div className="font-black text-base mb-3">Mahsulot qo'shish</div>
               <div className="space-y-2">
-                <input value={newProdName} onChange={e => setNewProdName(e.target.value)}
-                  placeholder="Mahsulot nomi"
-                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C8860A]" />
+                <input value={newProdName} onChange={e => setNewProdName(e.target.value)} placeholder="Mahsulot nomi"
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
                 <div className="flex gap-2">
-                  <input value={newProdPrice} onChange={e => setNewProdPrice(e.target.value)}
-                    placeholder="Narxi (so'm)" type="number"
-                    className="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C8860A]" />
+                  <input value={newProdPrice} onChange={e => setNewProdPrice(e.target.value)} placeholder="Narxi" type="number"
+                    className="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
                   <select value={newProdCat} onChange={e => setNewProdCat(e.target.value)}
                     className="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C8860A] bg-white">
                     <option value="">Kategoriya</option>
@@ -415,17 +555,14 @@ export default function AdminPage() {
                   </select>
                 </div>
                 <button onClick={addProduct}
-                  className="w-full py-2.5 bg-[#C8860A] text-[#1A1208] rounded-xl font-black text-sm hover:bg-[#F5C842] transition-all">
+                  className="w-full py-2.5 bg-[#C8860A] text-[#1A1208] rounded-xl font-black text-sm hover:bg-[#F5C842]">
                   ＋ Mahsulot qo'shish
                 </button>
               </div>
             </div>
 
-            {/* Mahsulotlar ro'yxati */}
             <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-              <div className="px-5 py-3 border-b border-gray-100 font-black text-base">
-                Mahsulotlar ({products.length} ta)
-              </div>
+              <div className="px-5 py-3 border-b border-gray-100 font-black text-base">Mahsulotlar ({products.length} ta)</div>
               <div className="divide-y divide-gray-50">
                 {products.map(p => {
                   const cat = categories.find(c => c.id === p.category_id)
@@ -436,11 +573,10 @@ export default function AdminPage() {
                         <div className="text-xs text-gray-400">{cat?.name} · {fmt(p.price)} so'm</div>
                       </div>
                       <button onClick={() => toggleAvail(p)}
-                        className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${p.is_available ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                        className={`px-3 py-1 rounded-full text-xs font-bold ${p.is_available ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                         {p.is_available ? 'Bor' : "Yo'q"}
                       </button>
-                      <button onClick={() => deleteProduct(p.id)}
-                        className="text-gray-300 hover:text-red-500 text-lg transition-all">✕</button>
+                      <button onClick={() => deleteProduct(p.id)} className="text-gray-300 hover:text-red-500 text-lg">✕</button>
                     </div>
                   )
                 })}
@@ -455,23 +591,19 @@ export default function AdminPage() {
             <div className="bg-white rounded-2xl border border-gray-200 p-5">
               <div className="font-black text-base mb-3">Xodim qo'shish</div>
               <div className="space-y-2">
-                <input value={newWorkerName} onChange={e => setNewWorkerName(e.target.value)}
-                  placeholder="Xodim ismi"
-                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C8860A]" />
-                <input value={newWorkerPin} onChange={e => setNewWorkerPin(e.target.value.slice(0, 4))}
-                  placeholder="4 xonali PIN kod" type="number" maxLength={4}
-                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C8860A]" />
+                <input value={newWorkerName} onChange={e => setNewWorkerName(e.target.value)} placeholder="Xodim ismi"
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
+                <input value={newWorkerPin} onChange={e => setNewWorkerPin(e.target.value.slice(0, 4))} placeholder="4 xonali PIN" type="number"
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
                 <button onClick={addWorker}
-                  className="w-full py-2.5 bg-[#C8860A] text-[#1A1208] rounded-xl font-black text-sm hover:bg-[#F5C842] transition-all">
+                  className="w-full py-2.5 bg-[#C8860A] text-[#1A1208] rounded-xl font-black text-sm hover:bg-[#F5C842]">
                   ＋ Xodim qo'shish
                 </button>
               </div>
             </div>
 
             <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-              <div className="px-5 py-3 border-b border-gray-100 font-black text-base">
-                Xodimlar ({workers.length} ta)
-              </div>
+              <div className="px-5 py-3 border-b border-gray-100 font-black text-base">Xodimlar ({workers.length} ta)</div>
               <div className="divide-y divide-gray-50">
                 {workers.map(w => (
                   <div key={w.id} className="flex items-center gap-3 px-5 py-3">
@@ -482,82 +614,7 @@ export default function AdminPage() {
                       <div className="font-bold text-sm">{w.name}</div>
                       <div className="text-xs text-gray-400">PIN: {w.pin}</div>
                     </div>
-                    <button onClick={() => deleteWorker(w.id)}
-                      className="text-gray-300 hover:text-red-500 text-lg transition-all">✕</button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ===== HISOBOT TAB ===== */}
-        {activeTab === 'hisobot' && (
-          <div className="space-y-4">
-
-            {/* Statistika */}
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { label: 'Jami tushum', val: fmt(totalRev) + ' so\'m', color: 'text-[#C8860A]' },
-                { label: 'Buyurtmalar', val: todayOrders.length + ' ta', color: 'text-[#1A1208]' },
-                { label: 'Naqd', val: fmt(cashRev) + ' so\'m', color: 'text-[#1E7B47]' },
-                { label: 'Click', val: fmt(clickRev) + ' so\'m', color: 'text-purple-600' },
-                { label: 'Karta', val: fmt(cardRev) + ' so\'m', color: 'text-blue-600' },
-                { label: 'Qarz', val: fmt(debtRev) + ' so\'m', color: 'text-[#B83232]' },
-                { label: 'Faol qarzlar', val: activeDebts.length + ' ta', color: 'text-[#B83232]' },
-              ].map((s, i) => (
-                <div key={i} className="bg-white rounded-2xl border border-gray-200 p-4">
-                  <div className="text-xs text-gray-400 font-bold mb-1">{s.label}</div>
-                  <div className={`font-black text-lg ${s.color}`}>{s.val}</div>
-                </div>
-              ))}
-            </div>
-
-            {/* Qarzdorlar */}
-            {activeDebts.length > 0 && (
-              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <div className="px-5 py-3 border-b border-gray-100 font-black text-base text-[#B83232]">
-                  Qarzdorlar
-                </div>
-                <div className="divide-y divide-gray-50">
-                  {activeDebts.map(o => (
-                    <div key={o.id} className="flex items-center gap-3 px-5 py-3">
-                      <div className="flex-1">
-                        <div className="font-bold text-sm">{o.debtor_name || "Noma'lum"}</div>
-                        <div className="text-xs text-gray-400">{fmt(o.total)} so'm</div>
-                      </div>
-                      <button onClick={() => payDebt(o.id)}
-                        className="px-4 py-2 bg-[#1E7B47] text-white rounded-xl text-xs font-black hover:bg-green-700 transition-all">
-                        To'landi
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* So'nggi buyurtmalar */}
-            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-              <div className="px-5 py-3 border-b border-gray-100 font-black text-base">
-                So'nggi buyurtmalar
-              </div>
-              <div className="divide-y divide-gray-50">
-                {todayOrders.slice(0, 20).map((o, i) => (
-                  <div key={o.id} className="flex items-center gap-3 px-5 py-3">
-                    <div className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center text-xs font-black text-gray-500">
-                      {todayOrders.length - i}
-                    </div>
-                    <div className="flex-1">
-                      <div className="font-bold text-sm">{fmt(o.total)} so'm</div>
-                      <div className="text-xs text-gray-400">
-                        {o.pay_type === 'qarz' ? `📝 Qarz — ${o.debtor_name}` : o.pay_type === 'karta' ? '💳 Karta' : '💵 Naqd'}
-                      </div>
-                    </div>
-                    {o.pay_type === 'qarz' && (
-                      <div className={`text-xs font-bold px-2 py-1 rounded-full ${o.debt_paid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                        {o.debt_paid ? "To'langan" : 'Qarzdor'}
-                      </div>
-                    )}
+                    <button onClick={() => deleteWorker(w.id)} className="text-gray-300 hover:text-red-500 text-lg">✕</button>
                   </div>
                 ))}
               </div>
@@ -566,16 +623,11 @@ export default function AdminPage() {
         )}
       </div>
 
-      {/* TOAST */}
       {toast && (
         <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-[#1A1208] text-[#F5C842] px-5 py-2.5 rounded-full text-sm font-bold z-50 shadow-lg">
           {toast}
         </div>
       )}
-      <button onClick={generatePDF}
-  className="w-full py-4 bg-[#1A1208] text-[#F5C842] rounded-2xl font-black text-base hover:bg-[#2C200A] transition-all">
-  📄 PDF hisobot yuklab olish
-</button>
     </div>
   )
 }

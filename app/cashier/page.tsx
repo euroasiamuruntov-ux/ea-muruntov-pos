@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { getRemainingMs, endTrial } from '@/lib/trial'
-import { LogOut, ShoppingCart, Plus, X, PackagePlus, PackageMinus, UtensilsCrossed, Timer } from 'lucide-react'
+import { LogOut, ShoppingCart, Plus, X, PackagePlus, PackageMinus, Clock } from 'lucide-react'
 
 type User = { id: string; name: string; role: string }
 type Category = { id: string; name: string }
@@ -65,15 +65,21 @@ export default function CashierPage() {
   }, [])
 
   const loadData = async () => {
-    const [{ data: cats }, { data: prods }, { data: shifts }] = await Promise.all([
-      supabase.from('categories').select('*').order('order_num'),
-      supabase.from('products').select('*').order('created_at'),
-      supabase.from('shifts').select('*').eq('is_open', true).maybeSingle(),
-    ])
-    setCategories(cats || [])
-    setProducts(prods || [])
-    setShift(shifts || null)
-  }
+  const [{ data: cats }, { data: prods }] = await Promise.all([
+    supabase.from('categories').select('*').order('order_num'),
+    supabase.from('products').select('*').order('created_at'),
+  ])
+  setCategories(cats || [])
+  setProducts(prods || [])
+
+  // Smena alohida yuklaymiz
+  const { data: shiftData } = await supabase
+    .from('shifts')
+    .select('*')
+    .eq('is_open', true)
+    .maybeSingle()
+  setShift(shiftData || null)
+}
 
   const showToast = (msg: string) => {
     setToast(msg); setTimeout(() => setToast(''), 2500)
@@ -83,21 +89,22 @@ export default function CashierPage() {
 
   // SMENA
   const openShift = async () => {
-    setLoading(true)
-    const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
-    const { data } = await supabase
-      .from('shifts')
-      .insert({ opened_by: u.id, is_open: true })
-      .select().single()
-    if (data) {
-      const stockRows = products.map(p => ({ shift_id: data.id, product_id: p.id, initial_qty: 0 }))
-      await supabase.from('shift_stock').insert(stockRows)
-      setShift(data)
-      showToast('✅ Smena ochildi!')
-    }
-    setLoading(false)
-    setActiveModal(null)
+  setLoading(true)
+  const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
+  const { data } = await supabase
+    .from('shifts')
+    .insert({ opened_by: u.id, is_open: true })
+    .select().single()
+  if (data) {
+    const stockRows = products.map(p => ({ shift_id: data.id, product_id: p.id, initial_qty: 0 }))
+    await supabase.from('shift_stock').insert(stockRows)
+    setShift(data)
+    showToast('✅ Smena ochildi!')
+    await loadData() // ← qo'shing
   }
+  setLoading(false)
+  setActiveModal(null)
+}
 
   const closeShift = async () => {
     if (!shift) return
@@ -237,39 +244,31 @@ export default function CashierPage() {
     <div className="h-screen bg-[#F5F3EE] flex flex-col overflow-hidden">
 
       {/* TOPBAR */}
-      <div className="bg-[#1C1407] px-5 py-3 flex items-center justify-between flex-shrink-0">
-        <div>
-          <div className="text-[#F5C842] font-black tracking-widest text-base">EA MURUNTOV</div>
-          <div className="text-gray-500 text-xs mt-0.5">{user?.name} · Kassir</div>
-        </div>
-        <div className="flex items-center gap-2">
-          {timeLeft > 0 && (
-            <div className={`px-2 py-1 rounded-lg text-xs font-black ${timeLeft < 60000 ? 'bg-red-900/40 text-red-400' : 'bg-[#3D2E10] text-[#F5C842]'}`}>
-              ⏱ {Math.floor(timeLeft / 60000)}:{String(Math.floor((timeLeft % 60000) / 1000)).padStart(2, '0')}
-            </div>
-          )}
-          {/* Smena tugmasi */}
-          <button onClick={() => setActiveModal('smena')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 ${shift ? 'bg-green-900/40 text-green-400' : 'bg-red-900/40 text-red-400'}`}>
-            <Timer size={12}/> {shift ? 'Ochiq' : 'Yopiq'}
-          </button>
-          {/* Kirim */}
-          <button onClick={() => setActiveModal('kirим')}
-            className="bg-[#3D2E10] text-[#F5C842] rounded-lg px-2 py-1.5 flex items-center gap-1 text-xs font-bold">
-            <PackagePlus size={14}/>
-          </button>
-          {/* Chiqim */}
-          <button onClick={() => setActiveModal('chiqim')}
-            className="bg-[#3D2E10] text-red-400 rounded-lg px-2 py-1.5 flex items-center gap-1 text-xs font-bold">
-            <PackageMinus size={14}/>
-          </button>
-          <button onClick={() => { localStorage.removeItem('pos_user'); router.push('/') }}
-            className="border border-gray-600 text-gray-400 rounded-lg px-2 py-1.5 text-xs flex items-center gap-1">
-            <LogOut size={14}/>
-          </button>
-        </div>
-      </div>
-
+<div className="bg-[#1C1407] px-3 py-2 flex items-center justify-between flex-shrink-0">
+  <div>
+    <div className="text-[#F5C842] font-black tracking-widest text-sm">EA MURUNTOV</div>
+    <div className="text-gray-500 text-xs">{user?.name} · Kassir</div>
+  </div>
+  <div style={{display:'flex', alignItems:'center', gap:'6px', flexShrink:0}}>
+  {timeLeft > 0 && (
+    <div style={{padding:'4px 8px', borderRadius:'8px', fontSize:'11px', fontWeight:900, background:'rgba(61,46,16,0.8)', color:'#F5C842', flexShrink:0}}>
+      ⏱ {Math.floor(timeLeft / 60000)}:{String(Math.floor((timeLeft % 60000) / 1000)).padStart(2, '0')}
+    </div>
+  )}
+  <button onClick={() => setActiveModal('smena')} style={{width:'32px', height:'32px', borderRadius:'8px', border: shift ? '1px solid #22c55e' : '1px solid #ef4444', background: shift ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)', color: shift ? '#4ade80' : '#f87171', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer'}}>
+    <Clock size={14}/>
+  </button>
+  <button onClick={() => setActiveModal('kirим')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#F5C842', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}>
+    <PackagePlus size={13}/>
+  </button>
+  <button onClick={() => setActiveModal('chiqim')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#f87171', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}>
+    <PackageMinus size={13}/>
+  </button>
+  <button onClick={() => { localStorage.removeItem('pos_user'); router.push('/') }} style={{width:'32px', height:'32px', borderRadius:'8px', border:'1px solid #4b5563', color:'#9ca3af', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', background:'transparent'}}>
+    <LogOut size={13}/>
+  </button>
+</div>
+</div>
       {/* MAIN */}
       <div className="flex flex-1 overflow-hidden">
 
@@ -386,40 +385,42 @@ export default function CashierPage() {
       {/* ===== MODALLAR ===== */}
 
       {/* SMENA MODAL */}
-      {activeModal === 'smena' && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center">
-          <div className="bg-white rounded-t-3xl p-6 w-full max-w-md">
-            <div className="flex justify-between items-center mb-6">
-              <div className="font-black text-lg">Smena boshqaruvi</div>
-              <button onClick={() => setActiveModal(null)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">✕</button>
-            </div>
-            {shift ? (
-              <>
-                <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-4">
-                  <div className="font-bold text-green-700">Smena ochiq</div>
-                  <div className="text-sm text-gray-500 mt-1">
-                    Boshlangan: {new Date(shift.opened_at).toLocaleTimeString('uz-UZ', {hour:'2-digit', minute:'2-digit'})}
-                  </div>
-                </div>
-                <button onClick={closeShift} disabled={loading}
-                  className="w-full py-4 rounded-xl bg-[#B83232] text-white font-black text-base disabled:opacity-50">
-                  {loading ? '...' : 'Smena yopish'}
-                </button>
-              </>
-            ) : (
-              <>
-                <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-4">
-                  <div className="font-bold text-gray-500">Smena yopiq</div>
-                </div>
-                <button onClick={openShift} disabled={loading}
-                  className="w-full py-4 rounded-xl bg-[#1E7B47] text-white font-black text-base disabled:opacity-50">
-                  {loading ? '...' : 'Smena ochish'}
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+{activeModal === 'smena' && (
+  <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center">
+    <div className="bg-white rounded-t-3xl p-6 w-full max-w-md">
+      <div className="flex justify-between items-center mb-6">
+        <div className="font-black text-lg">Smena boshqaruvi</div>
+        <button onClick={() => setActiveModal(null)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">✕</button>
+      </div>
+      {shift ? (
+  <>
+    <div className="bg-green-50 border-2 border-green-400 rounded-xl p-4 mb-4">
+      <div className="font-black text-green-700 text-base">✅ Smena ochiq</div>
+      <div className="text-sm text-gray-500 mt-1">
+        Boshlangan: {new Date(shift.opened_at).toLocaleTimeString('uz-UZ', {hour:'2-digit', minute:'2-digit'})}
+      </div>
+    </div>
+    <button onClick={closeShift} disabled={loading}
+      className="w-full py-4 rounded-xl font-black text-base text-white disabled:opacity-50"
+      style={{backgroundColor: '#B83232'}}>
+      {loading ? '...' : '🔴 Smena yopish'}
+    </button>
+  </>
+) : (
+  <>
+    <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4 mb-4">
+      <div className="font-black text-red-600 text-base">⭕ Smena yopiq</div>
+    </div>
+    <button onClick={openShift} disabled={loading}
+      className="w-full py-4 rounded-xl font-black text-base text-white disabled:opacity-50"
+      style={{backgroundColor: '#1E7B47'}}>
+      {loading ? '...' : '🟢 Smena ochish'}
+    </button>
+  </>
+)}
+    </div>
+  </div>
+)}
 
       {/* TO'LOV MODAL */}
       {activeModal === 'pay' && (

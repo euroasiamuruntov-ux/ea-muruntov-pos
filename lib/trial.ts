@@ -1,6 +1,6 @@
 const TRIAL_KEY = 'ea_trial'
 const MAX_USES = 3
-const SESSION_MS = 10 * 60 * 1000 // 10 daqiqa
+const SESSION_MS = 60 * 60 * 1000  // 1 soat
 const DAY_MS = 24 * 60 * 60 * 1000 // 24 soat
 
 type TrialData = {

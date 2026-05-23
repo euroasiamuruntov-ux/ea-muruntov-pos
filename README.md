@@ -38,12 +38,11 @@
 | Supabase JS | ^2.105.4 | DB client |
 | Lucide React | latest | Ikonalar |
 | jsPDF | latest | PDF hisobot |
-| Supabase | Free tier | PostgreSQL DB |
 | Vercel | Hobby (bepul) | Hosting |
 
 ---
 
-## 🌐 Muhit ma'lumotlari (.env.local)
+## 🌐 Muhit (.env.local)
 
 ```env
 NEXT_PUBLIC_SUPABASE_URL=https://etllsvlxtdumbwugxvia.supabase.co
@@ -51,35 +50,36 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 SUPABASE_SECRET_KEY=sb_secret_...
 ```
 
-- **GitHub username:** `euroasiamuruntov-ux`
+- **GitHub:** `euroasiamuruntov-ux` (collaborator: Shohruh459)
 - **Gmail:** `euroasiamuruntov@gmail.com`
-- **Collaborator:** `Shohruh459`
 
 ---
 
-## 👤 Rollar va kirish tizimi
+## 👤 Rollar
 
-| Rol | Kirish usuli | Yo'nalish |
-|-----|-------------|-----------|
-| Egasi (owner) | "Egasi" tab → parol (email yo'q) | `/admin` |
-| Xodim (worker) | 4 xonali PIN kod | `/cashier` |
+| Rol | Kirish | Yo'nalish |
+|-----|--------|-----------|
+| Egasi | Parol | `/admin` |
+| Xodim | 4 xonali PIN | `/cashier` |
 
-**Kirish ma'lumotlari:**
+**Test:**
 - Egasi parol: `6661`
 - Xodim Jasur: PIN `1234`
 
 ---
 
-## 🗄️ Supabase jadvallari
+## 🗄️ Supabase jadvallari (9 ta)
 
 ```
-users          — egasi va xodimlar (role: owner | worker)
-categories     — taom kategoriyalari
-products       — taomlar (narx, kategoriya, mavjudlik)
-shifts         — smenalar (ochilgan/yopilgan)
-shift_stock    — smena boshidagi mahsulot miqdori
-orders         — buyurtmalar (pay_type: naqd | click | karta | qarz)
+users          — egasi va xodimlar
+categories     — kategoriyalar
+products       — mahsulotlar
+shifts         — smenalar (opened_by, closed_by)
+shift_stock    — smena boshidagi miqdor
+orders         — buyurtmalar (naqd|click|karta|qarz|ichki)
 order_items    — buyurtma tarkibi
+write_offs     — chiqimlar (sabab bilan)
+stock_ins      — kirimlar
 ```
 
 ---
@@ -89,15 +89,15 @@ order_items    — buyurtma tarkibi
 ```
 ea-muruntov-pos/
 ├── app/
-│   ├── page.tsx           ✅ Login (PIN + egasi parol)
+│   ├── page.tsx           ✅ Login
 │   ├── admin/
 │   │   └── page.tsx       ✅ Admin paneli
 │   ├── cashier/
 │   │   └── page.tsx       ✅ Kassir paneli
 │   └── layout.tsx
 ├── lib/
-│   └── supabase.ts        ✅ Supabase client
-├── .env.local             ✅ Muhit o'zgaruvchilari
+│   ├── supabase.ts        ✅ Supabase client
+│   └── trial.ts           ✅ Trial timer (24s/3x/10min)
 └── README.md
 ```
 
@@ -106,76 +106,68 @@ ea-muruntov-pos/
 ## ✅ Bajarilgan ishlar
 
 ### Infratuzilma
-- [x] Gmail: `euroasiamuruntov@gmail.com`
-- [x] GitHub: `euroasiamuruntov-ux` (Public repo)
-- [x] Vercel: Hobby plan, deploy qilindi
-- [x] Supabase: Frankfurt, Free tier
-- [x] 7 ta jadval yaratildi
+- [x] Gmail, GitHub, Vercel, Supabase sozlandi
+- [x] 9 ta jadval yaratildi
 - [x] Haqiqiy mahsulotlar kiritildi (chekdan, sigaretlarsiz)
 
-### Kod
-- [x] `app/page.tsx` — Login (PIN + egasi faqat parol)
-- [x] `app/cashier/page.tsx` — Kassir paneli:
-  - [x] Kategoriya tablari
-  - [x] Katta mahsulot kartalar (landscape)
-  - [x] Savat (+/- boshqaruv)
-  - [x] To'lov modal (naqd/click/karta/qarz — 4 ta)
-  - [x] DB ga saqlash
-  - [x] Lucide ikonalar
-- [x] `app/admin/page.tsx` — Admin paneli:
-  - [x] Smena ochish/yopish
-  - [x] Mahsulot miqdori (sklad)
-  - [x] Mavjudlik belgisi (bor/yo'q)
-  - [x] Kategoriya qo'shish/o'chirish
-  - [x] Mahsulot qo'shish/o'chirish
-  - [x] Xodim qo'shish/o'chirish + PIN
-  - [x] Hisobot (naqd/click/karta/qarz statistika)
-  - [x] PDF yuklab olish
-  - [x] Lucide ikonalar
-- [x] GitHub push ✅
-- [x] Vercel deploy ✅ LIVE
+### Login (`app/page.tsx`)
+- [x] Egasi — parol bilan (email yo'q)
+- [x] Xodim — 4 xonali PIN
+- [x] Trial timer tekshiruvi (limit bo'lsa xato)
+
+### Kassir paneli (`app/cashier/page.tsx`)
+- [x] Smena ochish/yopish (kassir tomonidan)
+- [x] Kategoriya tablari
+- [x] Katta mahsulot kartalar (landscape)
+- [x] Multi-hisob (5 tagacha parallel)
+- [x] Savat (+/- boshqaruv)
+- [x] To'lov: naqd / click / karta / qarz / ichki
+- [x] Ichki iste'mol (tushum hisobiga kirmaydi)
+- [x] Mahsulot kirim moduli
+- [x] Mahsulot chiqim moduli (izoh bilan)
+- [x] Trial timer (topbarda countdown)
+- [x] DB ga saqlash
+
+### Admin paneli (`app/admin/page.tsx`)
+- [x] Smena holati ko'rish
+- [x] Mahsulot miqdori (sklad)
+- [x] Mavjudlik belgisi (bor/yo'q)
+- [x] Kategoriya qo'shish/o'chirish
+- [x] Mahsulot qo'shish/o'chirish
+- [x] Xodim qo'shish/o'chirish + PIN
+- [x] Hisobot (naqd/click/karta/qarz/ichki)
+- [x] Qarzdorlar + yopish
+- [x] PDF yuklab olish
+
+### Trial tizimi (`lib/trial.ts`)
+- [x] 24 soat ichida 3 marta
+- [x] Har sessiya 10 daqiqa
+- [x] Tugagach login sahifasiga qaytarish
+- [x] `disableTrial()` — to'lov olgach o'chirish
 
 ---
 
-## 🔲 Qolgan ishlar
+## 🔲 Keyingi ishlar (2-bosqich)
 
-- [ ] Mahsulotlarga rasm yuklash (admin paneldan)
-- [ ] Smena yopilganda qoldiq miqdor kiritish (farq hisobi)
-- [ ] Egasi o'z mahsulotlarini qo'shishi (demo video)
+### Rahbar kengaytirilgan hisoboti
+- [ ] Smena: kim ochdi, kim yopdi, soat
+- [ ] Kirimlar ro'yxati (kim, nima, qancha)
+- [ ] Chiqimlar ro'yxati (kim, nima, izoh)
+- [ ] Ichki iste'mol ro'yxati (kim nima yedi)
+- [ ] Har mahsulotdan nechta sotildi
+- [ ] Qoldiq hisobi: boshlang'ich − sotilgan − chiqim − ichki
+- [ ] PDF ga kirim/chiqim qo'shish
 
----
-
-## 📦 Kategoriyalar (DB da)
-
-1. Issiq taomlar
-2. Somsa & Non
-3. Shirinliklar
-4. Ichimliklar
-5. Sharbatlar
-6. Salatlar
-7. Boshqa
-
-> ⚠️ Sigaretlar qo'shilmagan — egasi o'zi qo'shadi (demo video uchun)
-
----
-
-## 🖥️ Lokal ishga tushirish
-
-```bash
-git clone https://github.com/euroasiamuruntov-ux/ea-muruntov-pos.git
-cd ea-muruntov-pos
-npm install
-# .env.local yarating
-npm run dev
-```
+### Kelajak
+- [ ] Osh yarim/butun porsiya hisobi
+- [ ] Telegram bot (chiqim xabari)
+- [ ] Mahsulotga rasm yuklash
 
 ---
 
 ## 💰 Shartnoma
 
-- **Jami:** $1,300 (~16,640,000 so'm)
-- **50% oldindan:** $650
-- **50% topshirishda:** $650
+- **Jami:** $1,300
 - **Platform:** Planshet brauzer (landscape)
 
 ---
