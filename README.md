@@ -59,8 +59,8 @@ SUPABASE_SECRET_KEY=sb_secret_...
 
 | Rol | Kirish | Yo'nalish |
 |-----|--------|-----------|
-| Egasi | Parol | `/admin` |
-| Xodim | 4 xonali PIN | `/cashier` |
+| Egasi/Rahbar | Parol | `/admin` |
+| Xodim/Kassir | 4 xonali PIN | `/cashier` |
 
 **Test:**
 - Egasi parol: `6661`
@@ -68,18 +68,22 @@ SUPABASE_SECRET_KEY=sb_secret_...
 
 ---
 
-## 🗄️ Supabase jadvallari (9 ta)
+## 🗄️ Supabase jadvallari (12 ta)
 
 ```
 users          — egasi va xodimlar
 categories     — kategoriyalar
-products       — mahsulotlar
+products       — mahsulotlar (is_unlimited, litr_per_unit, unit_type, hissa_per_unit)
 shifts         — smenalar (opened_by, closed_by)
 shift_stock    — smena boshidagi miqdor
-orders         — buyurtmalar (naqd|click|karta|qarz|ichki)
+shift_reports  — smena yopish hisoboti (system_qty, actual_qty, diff, note)
+osh_stock      — osh hissa hisobi
+orders         — buyurtmalar (naqd|click|karta|qarz|ichki, actual_paid, payment_note)
 order_items    — buyurtma tarkibi
 write_offs     — chiqimlar (sabab bilan)
 stock_ins      — kirimlar
+debtors        — qarzdorlar bazasi (total_debt)
+debt_payments  — qarz to'lov tarixi (pay_type, amount)
 ```
 
 ---
@@ -89,15 +93,16 @@ stock_ins      — kirimlar
 ```
 ea-muruntov-pos/
 ├── app/
-│   ├── page.tsx           ✅ Login
+│   ├── page.tsx                    ✅ Login
 │   ├── admin/
-│   │   └── page.tsx       ✅ Admin/Rahbar paneli
+│   │   └── page.tsx               ✅ Rahbar paneli
 │   ├── cashier/
-│   │   └── page.tsx       ✅ Kassir paneli
+│   │   ├── page.tsx               ✅ Kassir paneli
+│   │   └── components/
+│   │       └── DebtorCard.tsx     ✅ Qarzdor kartasi
 │   └── layout.tsx
 ├── lib/
-│   ├── supabase.ts        ✅ Supabase client
-│   └── trial.ts           ✅ Trial timer
+│   └── supabase.ts                ✅ Supabase client
 └── README.md
 ```
 
@@ -105,34 +110,39 @@ ea-muruntov-pos/
 
 ## ✅ Bajarilgan ishlar
 
-### Infratuzilma
-- [x] Gmail, GitHub, Vercel, Supabase sozlandi
-- [x] 9 ta jadval yaratildi
-- [x] Haqiqiy mahsulotlar kiritildi (chekdan, sigaretlarsiz)
-
 ### Login (`app/page.tsx`)
 - [x] Egasi — parol bilan
 - [x] Xodim — 4 xonali PIN
-- [x] Trial timer tekshiruvi
+- [x] Trial tizimi o'chirildi
 
 ### Kassir paneli (`app/cashier/page.tsx`)
-- [x] Smena ochish/yopish (kassir tomonidan)
+- [x] Smena yopiq → faqat "Smena ochish" ko'rinadi
+- [x] Smena boshi — o'tgan qoldiqlarni ko'rish va tasdiqlash
 - [x] Kategoriya tablari
-- [x] Katta mahsulot kartalar (landscape)
+- [x] Mahsulot kartalar (landscape, katta)
+- [x] Chekli mahsulotlar — qoldiq ko'rsatiladi, tugaganda bosilmaydi
+- [x] Cheksiz mahsulotlar (Osh, Mastava, Jarkoe, Kompot) — taxminiy qoldiq
+- [x] Kampot — litrda kirim, stakanda ko'rsatiladi
+- [x] Osh — kg kirim, hissa tizimi (butun=3, yarim=2)
 - [x] Multi-hisob (5 tagacha parallel)
 - [x] Savat (+/- boshqaruv)
+- [x] Moslashuvchan to'lov (±1000 so'm chegarasi)
 - [x] To'lov: naqd / click / karta / qarz / ichki
+- [x] Qarz — mavjud qarzdor qidirish yoki yangi qo'shish
 - [x] Ichki iste'mol (tushum hisobiga kirmaydi)
-- [x] Mahsulot kirim moduli
-- [x] Mahsulot chiqim moduli (izoh bilan)
-- [x] Trial timer (topbarda countdown)
-- [x] Topbar tugmalar (inline style bilan tuzatildi)
+- [x] Mahsulot kirim (kg/litr/dona)
+- [x] Mahsulot chiqim (izoh majburiy)
+- [x] Qoldiq realtime (kirim + boshlang'ich - sotilgan - chiqim)
+- [x] Smena yopish hisoboti (kassir sanaydi, farq bo'lsa izoh)
+- [x] Qarzdorlar bazasi (qidirish, tarix, to'lov 3 turda)
 
 ### Rahbar paneli (`app/admin/page.tsx`)
-- [x] Smena ma'lumoti (kim ochdi, kim yopdi, soat)
+- [x] Smena ma'lumoti (kim ochdi, kim yopdi)
 - [x] Moliyaviy statistika (naqd/click/karta/qarz/ichki)
+- [x] Moslashuvchan to'lov hisoboti (actual_paid)
 - [x] Mahsulot hisobi jadvali (boshlang'ich/kirim/sotildi/chiqim/qoldiq)
-- [x] Ichki iste'mol ro'yxati (kim nima yedi)
+- [x] Osh qoldig'i (hissa → butun/yarim)
+- [x] Ichki iste'mol ro'yxati
 - [x] Chiqimlar ro'yxati (izoh bilan)
 - [x] Kirimlar ro'yxati
 - [x] Qarzdorlar + yopish
@@ -140,21 +150,25 @@ ea-muruntov-pos/
 - [x] Kategoriya/mahsulot/xodim boshqaruvi
 - [x] Sklad (boshlang'ich miqdor, bor/yo'q)
 
-### Trial tizimi (`lib/trial.ts`)
-- [x] 24 soat ichida 3 marta
-- [x] Har sessiya 1 soat
-- [x] Tugagach login sahifasiga qaytarish
-- [x] `disableTrial()` — to'lov olgach o'chirish
-
 ---
 
 ## 🔲 Keyingi ishlar
 
-- [ ] Sigaretlarni egasi o'zi qo'shishi (demo video)
-- [ ] Trial o'chirish (to'lov olgach `disableTrial()`)
-- [ ] Telegram bot (chiqim xabari rahbarga)
-- [ ] Osh yarim/butun porsiya hisobi
-- [ ] Mahsulotga rasm yuklash
+- [ ] Smena yopish PDF → Telegram jo'natish
+- [ ] Rahbar paneli mobil optimizatsiya
+- [ ] Rahbar qarzdorlar bazasi
+- [ ] Kampot sotilganda stakan sifatida ayirish
+
+---
+
+## 📦 Mahsulot turlari
+
+| Tur | Misollar | Hisob |
+|-----|----------|-------|
+| Chekli (dona) | Somsa, Cola, Salat | Kirim − Sotilgan − Chiqim |
+| Cheksiz | Osh, Mastava, Jarkoe | Taxminiy ko'rsatiladi |
+| Hissa (kg) | Osh butun, Osh yarim | 1kg=21hissa, butun=3, yarim=2 |
+| Litr | Kompot | 1 stakan = 0.42 litr |
 
 ---
 

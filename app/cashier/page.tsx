@@ -2,41 +2,48 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { getRemainingMs, endTrial } from '@/lib/trial'
-import { LogOut, ShoppingCart, Plus, X, PackagePlus, PackageMinus, Clock } from 'lucide-react'
+import { LogOut, ShoppingCart, Plus, X, PackagePlus, PackageMinus, Clock, Search } from 'lucide-react'
+import DebtorCard from './components/DebtorCard'
+import jsPDF from 'jspdf'
 
 type User = { id: string; name: string; role: string }
 type Category = { id: string; name: string }
 type Product = {
-  id: string
-  name: string
-  price: number
-  category_id: string
-  is_available: boolean
-  unit_type: string
-  hissa_per_unit: number
-  kg_to_hissa: number
+  id: string; name: string; price: number; category_id: string
+  is_available: boolean; unit_type: string; hissa_per_unit: number
+  kg_to_hissa: number; is_unlimited: boolean; unit_label: string
+  litr_per_unit: number | null
 }
 type CartItem = { product: Product; qty: number }
 type Bill = { id: number; cart: CartItem[] }
 type Shift = { id: string; is_open: boolean; opened_at: string }
 type Stock = { product_id: string; initial_qty: number }
 type StockIn = { id: string; product_id: string; qty: number }
-type ActiveModal = null | 'pay' | 'kirим' | 'chiqim' | 'smena'
+type WriteOff = { id: string; product_id: string; qty: number }
+type OrderItem = { order_id: string; product_id: string; qty: number }
+type Debtor = { id: string; name: string; phone: string; total_debt: number }
+type PrevStock = { product_id: string; name: string; qty: number; note: string }
+type ActiveModal = null | 'pay' | 'kirим' | 'chiqim' | 'smena' | 'moslashuv' | 'debtors' | 'close_shift' | 'shift_start'
 
 export default function CashierPage() {
   const router = useRouter()
-  const [timeLeft, setTimeLeft] = useState(0)
   const [user, setUser] = useState<User | null>(null)
   const [categories, setCategories] = useState<Category[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [shift, setShift] = useState<Shift | null>(null)
   const [stocks, setStocks] = useState<Stock[]>([])
   const [stockIns, setStockIns] = useState<StockIn[]>([])
-  const [hissaStock, setHissaStock] = useState<{[shiftId: string]: number}>({})
+  const [writeOffs, setWriteOffs] = useState<WriteOff[]>([])
+  const [orderItems, setOrderItems] = useState<OrderItem[]>([])
+  const [hissaStock, setHissaStock] = useState<{[id: string]: number}>({})
+  const [debtors, setDebtors] = useState<Debtor[]>([])
+  const [prevStocks, setPrevStocks] = useState<PrevStock[]>([])
   const [activeCat, setActiveCat] = useState('Barchasi')
   const [payType, setPayType] = useState<'naqd' | 'click' | 'karta' | 'qarz' | 'ichki'>('naqd')
   const [debtorName, setDebtorName] = useState('')
+  const [debtorPhone, setDebtorPhone] = useState('')
+  const [selectedDebtorId, setSelectedDebtorId] = useState('')
+  const [debtorSearch, setDebtorSearch] = useState('')
   const [activeModal, setActiveModal] = useState<ActiveModal>(null)
   const [toast, setToast] = useState('')
   const [loading, setLoading] = useState(false)
@@ -46,6 +53,9 @@ export default function CashierPage() {
   const [selectedProd, setSelectedProd] = useState('')
   const [qty, setQty] = useState('')
   const [reason, setReason] = useState('')
+  const [moslashuvSumma, setMoslashuvSumma] = useState('')
+  const [moslashuvActual, setMoslashuvActual] = useState<number | null>(null)
+  const [shiftReport, setShiftReport] = useState<{[productId: string]: {actual: string; note: string}}>({})
 
   const activeBill = bills.find(b => b.id === activeBillId)!
   const cart = activeBill?.cart || []
@@ -57,130 +67,272 @@ export default function CashierPage() {
     if (parsed.role !== 'worker') { router.push('/admin'); return }
     setUser(parsed)
     loadData()
-
-    const remaining = getRemainingMs()
-    setTimeLeft(remaining)
-    const interval = setInterval(() => {
-      const left = getRemainingMs()
-      setTimeLeft(left)
-      if (left <= 0) {
-        clearInterval(interval)
-        endTrial()
-        localStorage.removeItem('pos_user')
-        router.push('/?expired=1')
-      }
-    }, 1000)
-    return () => clearInterval(interval)
   }, [])
 
   const loadData = async () => {
-    const [{ data: cats }, { data: prods }] = await Promise.all([
+    const [{ data: cats }, { data: prods }, { data: dbtrs }] = await Promise.all([
       supabase.from('categories').select('*').order('order_num'),
       supabase.from('products').select('*').order('created_at'),
+      supabase.from('debtors').select('*').order('name'),
     ])
     setCategories(cats || [])
     setProducts(prods || [])
+    setDebtors(dbtrs || [])
 
     const { data: shiftData } = await supabase
-      .from('shifts')
-      .select('*')
-      .eq('is_open', true)
-      .maybeSingle()
+      .from('shifts').select('*').eq('is_open', true).maybeSingle()
     setShift(shiftData || null)
 
     if (shiftData?.id) {
-      // Osh hissa
       const { data: oshStock } = await supabase
-        .from('osh_stock')
-        .select('*')
-        .eq('shift_id', shiftData.id)
-        .maybeSingle()
-      if (oshStock) {
-        setHissaStock({ [shiftData.id]: oshStock.total_hissa })
-      }
+        .from('osh_stock').select('*').eq('shift_id', shiftData.id).maybeSingle()
+      if (oshStock) setHissaStock({ [shiftData.id]: oshStock.total_hissa })
 
-      // Boshlang'ich miqdor
-      const { data: stockData } = await supabase
-        .from('shift_stock')
-        .select('*')
-        .eq('shift_id', shiftData.id)
+      const [{ data: stockData }, { data: siData }, { data: woData }, { data: ords }] = await Promise.all([
+        supabase.from('shift_stock').select('*').eq('shift_id', shiftData.id),
+        supabase.from('stock_ins').select('*').eq('shift_id', shiftData.id),
+        supabase.from('write_offs').select('*').eq('shift_id', shiftData.id),
+        supabase.from('orders').select('id').eq('shift_id', shiftData.id),
+      ])
       setStocks(stockData || [])
-
-      // Kirimlar
-      const { data: siData } = await supabase
-        .from('stock_ins')
-        .select('*')
-        .eq('shift_id', shiftData.id)
       setStockIns(siData || [])
+      setWriteOffs(woData || [])
+
+      if (ords && ords.length > 0) {
+        const orderIds = ords.map((o: {id: string}) => o.id)
+        const { data: oi } = await supabase
+          .from('order_items').select('*').in('order_id', orderIds)
+        setOrderItems(oi || [])
+      } else {
+        setOrderItems([])
+      }
     } else {
-      setStocks([])
-      setStockIns([])
+      setStocks([]); setStockIns([]); setWriteOffs([]); setOrderItems([])
     }
   }
 
-  const showToast = (msg: string) => {
-    setToast(msg); setTimeout(() => setToast(''), 2500)
-  }
-
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 2500) }
   const fmt = (n: number) => n.toLocaleString('uz-UZ')
 
   const getHissaQoldiq = (product: Product): number => {
-    if (product.unit_type !== 'hissa') return 999
+    if (product.unit_type !== 'hissa') return 0
     if (!shift) return 0
-    const totalHissa = hissaStock[shift.id] || 0
-    return Math.floor(totalHissa / product.hissa_per_unit)
+    return Math.floor((hissaStock[shift.id] || 0) / product.hissa_per_unit)
   }
 
   const getDonaQoldiq = (productId: string): number | null => {
     if (!shift) return null
     const stock = stocks.find(s => s.product_id === productId)
     if (!stock) return null
-    const kirim = stockIns
-      .filter(si => si.product_id === productId)
-      .reduce((s, si) => s + si.qty, 0)
-    const jami = (stock.initial_qty || 0) + kirim
-    if (jami === 0) return null
-    return jami
+    const kirim = stockIns.filter(si => si.product_id === productId).reduce((s, si) => s + si.qty, 0)
+    const sotildi = orderItems.filter(oi => oi.product_id === productId).reduce((s, oi) => s + oi.qty, 0)
+    const chiqim = writeOffs.filter(w => w.product_id === productId).reduce((s, w) => s + w.qty, 0)
+    return (stock.initial_qty || 0) + kirim - sotildi - chiqim
   }
 
-  // SMENA
+  const getSystemQty = (product: Product): number => {
+    if (product.unit_type === 'hissa') return getHissaQoldiq(product)
+    return getDonaQoldiq(product.id) ?? 0
+  }
+
+  const getQoldiqLabel = (p: Product): string | null => {
+    if (p.unit_type === 'hissa') {
+      const q = getHissaQoldiq(p)
+      return q > 0 ? `~${q} ta` : 'Kirim kerak'
+    }
+    const q = getDonaQoldiq(p.id)
+    if (p.litr_per_unit && q !== null) {
+      const stakan = Math.floor(q / p.litr_per_unit)
+      return stakan > 0 ? `~${stakan} stakan` : 'Kirim kerak'
+    }
+    if (q === null) return null
+    return q > 0 ? `~${q} ta` : 'Kirim kerak'
+  }
+
+  // SMENA OCHISH
   const openShift = async () => {
+    setLoading(true)
+
+    // O'tgan smena qoldiqlarini olamiz
+    const { data: lastShift } = await supabase
+      .from('shifts').select('id')
+      .eq('is_open', false)
+      .order('closed_at', { ascending: false })
+      .limit(1).maybeSingle()
+
+    if (lastShift?.id) {
+      const { data: lastReport } = await supabase
+        .from('shift_reports')
+        .select('*, products(name)')
+        .eq('shift_id', lastShift.id)
+        .gt('actual_qty', 0)
+
+      if (lastReport && lastReport.length > 0) {
+        const prevList: PrevStock[] = lastReport.map((r: any) => ({
+          product_id: r.product_id,
+          name: r.products?.name || '',
+          qty: r.actual_qty,
+          note: '',
+        }))
+        setPrevStocks(prevList)
+        setLoading(false)
+        setActiveModal('shift_start')
+        return
+      }
+    }
+
+    await doOpenShift()
+  }
+
+  const doOpenShift = async () => {
     setLoading(true)
     const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
     const { data } = await supabase
-      .from('shifts')
-      .insert({ opened_by: u.id, is_open: true })
-      .select().single()
+      .from('shifts').insert({ opened_by: u.id, is_open: true }).select().single()
+
     if (data) {
-      const stockRows = products.map(p => ({ shift_id: data.id, product_id: p.id, initial_qty: 0 }))
+      const stockRows = products.map(p => {
+        const prev = prevStocks.find(ps => ps.product_id === p.id)
+        return { shift_id: data.id, product_id: p.id, initial_qty: prev ? prev.qty : 0 }
+      })
       await supabase.from('shift_stock').insert(stockRows)
       setShift(data)
       showToast('✅ Smena ochildi!')
+      setPrevStocks([])
       await loadData()
     }
     setLoading(false)
     setActiveModal(null)
   }
 
+  // SMENA YOPISH
   const closeShift = async () => {
-    if (!shift) return
-    setLoading(true)
-    const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
-    await supabase.from('shifts')
-      .update({ is_open: false, closed_at: new Date().toISOString(), closed_by: u.id })
-      .eq('id', shift.id)
-    setShift(null)
-    setStocks([])
-    setStockIns([])
-    setHissaStock({})
-    showToast('Smena yopildi')
-    setLoading(false)
-    setActiveModal(null)
+  if (!shift) return
+  setLoading(true)
+  const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
+
+  const reportRows = products.map(p => {
+    const systemQty = getSystemQty(p)
+    const rep = shiftReport[p.id]
+    const actual = !rep?.actual ? systemQty : parseFloat(rep.actual)
+    const diff = actual - systemQty
+    return {
+      shift_id: shift.id, product_id: p.id,
+      system_qty: systemQty, actual_qty: actual,
+      diff, note: rep?.note || '',
+    }
+  })
+
+  await supabase.from('shift_reports').insert(reportRows)
+  await supabase.from('shifts')
+    .update({ is_open: false, closed_at: new Date().toISOString(), closed_by: u.id })
+    .eq('id', shift.id)
+
+  // PDF yaratish
+  generateShiftPDF(reportRows)
+
+  setShift(null); setStocks([]); setStockIns([])
+  setWriteOffs([]); setOrderItems([]); setHissaStock({})
+  setShiftReport({})
+  showToast('✅ Smena yopildi! PDF yuklab olindi.')
+  setLoading(false)
+  setActiveModal(null)
+}
+  const generateShiftPDF = (reportRows: {
+  product_id: string; system_qty: number; actual_qty: number; diff: number; note: string
+}[]) => {
+  const doc = new jsPDF()
+  let y = 20
+
+  // Sarlavha
+  doc.setFontSize(18); doc.setFont('helvetica', 'bold')
+  doc.text('EA MURUNTOV - Smena Hisoboti', 105, y, { align: 'center' }); y += 10
+
+  doc.setFontSize(10); doc.setFont('helvetica', 'normal')
+  doc.text(`Sana: ${new Date().toLocaleDateString('ru-RU')}`, 105, y, { align: 'center' }); y += 6
+  doc.text(
+    `Smena: ${new Date(shift!.opened_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} — ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`,
+    105, y, { align: 'center' }
+  ); y += 10
+
+  doc.setLineWidth(0.5); doc.line(20, y, 190, y); y += 8
+
+  // Mahsulot hisobi
+  doc.setFontSize(12); doc.setFont('helvetica', 'bold')
+  doc.text('Mahsulot hisobi:', 20, y); y += 8
+
+  // Jadval sarlavhasi
+  doc.setFontSize(9); doc.setFont('helvetica', 'bold')
+  doc.setFillColor(240, 240, 240)
+  doc.rect(20, y - 4, 170, 8, 'F')
+  doc.text('Mahsulot', 22, y)
+  doc.text('Tizim', 110, y)
+  doc.text('Haqiqiy', 130, y)
+  doc.text('Farq', 155, y)
+  y += 8
+
+  doc.setFont('helvetica', 'normal')
+  reportRows.forEach(r => {
+    if (y > 265) { doc.addPage(); y = 20 }
+    const prod = products.find(p => p.id === r.product_id)
+    const name = (prod?.name || 'Noma\'lum').slice(0, 35)
+
+    // Farq bo'lsa qizil rang
+    if (r.diff !== 0) {
+      doc.setTextColor(180, 50, 50)
+    } else {
+      doc.setTextColor(0, 0, 0)
+    }
+
+    doc.text(name, 22, y)
+    doc.text(String(r.system_qty), 115, y)
+    doc.text(String(r.actual_qty), 135, y)
+    doc.text(r.diff === 0 ? '—' : (r.diff > 0 ? '+' : '') + String(r.diff), 158, y)
+
+    if (r.note) {
+      y += 5
+      doc.setFontSize(8); doc.setTextColor(120, 120, 120)
+      doc.text(`  Izoh: ${r.note}`, 22, y)
+      doc.setFontSize(9); doc.setTextColor(0, 0, 0)
+    }
+
+    doc.setTextColor(0, 0, 0)
+    y += 7
+  })
+
+  // Umumiy farqlar bo'limi
+  const withDiff = reportRows.filter(r => r.diff !== 0)
+  if (withDiff.length > 0) {
+    y += 4; doc.setLineWidth(0.3); doc.line(20, y, 190, y); y += 8
+    doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.setTextColor(180, 50, 50)
+    doc.text('⚠ Farqlar:', 20, y); y += 8
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal')
+    withDiff.forEach(r => {
+      if (y > 265) { doc.addPage(); y = 20 }
+      const prod = products.find(p => p.id === r.product_id)
+      doc.setTextColor(180, 50, 50)
+      doc.text(`${prod?.name || ''}: ${r.diff > 0 ? '+' : ''}${r.diff} ta`, 25, y)
+      if (r.note) {
+        doc.setTextColor(100, 100, 100)
+        doc.text(`Izoh: ${r.note}`, 100, y)
+      }
+      doc.setTextColor(0, 0, 0)
+      y += 7
+    })
   }
 
+  // Footer
+  doc.setFontSize(8); doc.setTextColor(150, 150, 150)
+  doc.text('Zarafshon Dasturchilari | EA Muruntov POS', 105, 285, { align: 'center' })
+
+  const sana = new Date().toLocaleDateString('ru-RU').replace(/\./g, '-')
+  const vaqt = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }).replace(':', '-')
+  doc.save(`smena-hisobot-${sana}-${vaqt}.pdf`)
+}
   // BILL
   const addBill = () => {
-    if (bills.length >= 5) { showToast("Maksimal 5 ta hisob!"); return }
+    if (!shift) { showToast('Avval smena oching!'); return }
+    if (bills.length >= 5) { showToast('Maksimal 5 ta hisob!'); return }
     const newBill: Bill = { id: nextBillId, cart: [] }
     setBills(prev => [...prev, newBill])
     setActiveBillId(nextBillId)
@@ -188,7 +340,7 @@ export default function CashierPage() {
   }
 
   const removeBill = (id: number) => {
-    if (bills.length === 1) { showToast("Kamida 1 ta hisob!"); return }
+    if (bills.length === 1) { showToast('Kamida 1 ta hisob!'); return }
     const remaining = bills.filter(b => b.id !== id)
     setBills(remaining)
     if (activeBillId === id) setActiveBillId(remaining[0].id)
@@ -205,15 +357,27 @@ export default function CashierPage() {
         return cat && p.category_id === cat.id
       })
 
+  const filteredDebtors = debtors.filter(d =>
+    d.name.toLowerCase().includes(debtorSearch.toLowerCase()) ||
+    (d.phone || '').includes(debtorSearch)
+  )
+
   const addToCart = (product: Product) => {
+    if (!shift) { showToast('Avval smena oching!'); return }
     if (!product.is_available) return
 
-    if (product.unit_type === 'hissa') {
-      const qoldiq = getHissaQoldiq(product)
-      const cartQtyNow = cart.find(i => i.product.id === product.id)?.qty || 0
-      if (cartQtyNow >= qoldiq) {
-        showToast(`⚠️ Yetarli ${product.name} yo'q!`)
-        return
+    if (!product.is_unlimited) {
+      if (product.unit_type === 'hissa') {
+        const qoldiq = getHissaQoldiq(product)
+        const cartQtyNow = cart.find(i => i.product.id === product.id)?.qty || 0
+        if (cartQtyNow >= qoldiq) { showToast(`⚠️ ${product.name} tugadi!`); return }
+      } else {
+        const qoldiq = getDonaQoldiq(product.id)
+        if (qoldiq !== null && qoldiq <= 0) { showToast(`⚠️ ${product.name} tugadi!`); return }
+        if (qoldiq !== null) {
+          const cartQtyNow = cart.find(i => i.product.id === product.id)?.qty || 0
+          if (cartQtyNow >= qoldiq) { showToast(`⚠️ ${product.name} tugadi!`); return }
+        }
       }
     }
 
@@ -226,14 +390,17 @@ export default function CashierPage() {
   }
 
   const changeQty = (productId: string, delta: number) => {
-    if (delta > 0) {
-      const prod = products.find(p => p.id === productId)
-      if (prod?.unit_type === 'hissa') {
+    const prod = products.find(p => p.id === productId)
+    if (delta > 0 && prod && !prod.is_unlimited) {
+      if (prod.unit_type === 'hissa') {
         const qoldiq = getHissaQoldiq(prod)
         const cartQtyNow = cart.find(i => i.product.id === productId)?.qty || 0
-        if (cartQtyNow >= qoldiq) {
-          showToast(`⚠️ Yetarli ${prod.name} yo'q!`)
-          return
+        if (cartQtyNow >= qoldiq) { showToast(`⚠️ ${prod.name} tugadi!`); return }
+      } else {
+        const qoldiq = getDonaQoldiq(productId)
+        if (qoldiq !== null) {
+          const cartQtyNow = cart.find(i => i.product.id === productId)?.qty || 0
+          if (cartQtyNow >= qoldiq) { showToast(`⚠️ ${prod.name} tugadi!`); return }
         }
       }
     }
@@ -250,57 +417,70 @@ export default function CashierPage() {
     setLoading(true)
     const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
 
-    const { data: order, error } = await supabase
-      .from('orders')
-      .insert({
-        shift_id: shift?.id || null,
-        worker_id: u.id,
-        total: payType === 'ichki' ? 0 : total,
-        pay_type: payType,
-        debtor_name: payType === 'qarz' ? debtorName : null,
-        debt_paid: false,
-      })
-      .select().single()
+    let debtorId = selectedDebtorId || null
+
+    if (payType === 'qarz' && !selectedDebtorId && debtorName.trim()) {
+      const { data: newDebtor } = await supabase.from('debtors')
+        .insert({ name: debtorName.trim(), phone: debtorPhone.trim(), total_debt: total })
+        .select().single()
+      if (newDebtor) { debtorId = newDebtor.id; setDebtors(prev => [...prev, newDebtor]) }
+    } else if (payType === 'qarz' && selectedDebtorId) {
+      const debtor = debtors.find(d => d.id === selectedDebtorId)
+      if (debtor) {
+        await supabase.from('debtors')
+          .update({ total_debt: debtor.total_debt + total, updated_at: new Date().toISOString() })
+          .eq('id', selectedDebtorId)
+        setDebtors(prev => prev.map(d => d.id === selectedDebtorId
+          ? { ...d, total_debt: d.total_debt + total } : d))
+      }
+    }
+
+    const actualPaid = moslashuvActual ?? total
+    const paymentNote = moslashuvActual && moslashuvActual !== total
+      ? `Moslashuv: ${fmt(moslashuvActual)} so'm (farq: ${fmt(moslashuvActual - total)} so'm)`
+      : null
+
+    const { data: order, error } = await supabase.from('orders').insert({
+      shift_id: shift?.id || null,
+      worker_id: u.id,
+      total: payType === 'ichki' ? 0 : total,
+      pay_type: payType,
+      debtor_name: payType === 'qarz'
+        ? (debtorName || debtors.find(d => d.id === selectedDebtorId)?.name)
+        : null,
+      debtor_id: debtorId,
+      debt_paid: payType !== 'qarz',
+      actual_paid: payType === 'ichki' ? 0 : actualPaid,
+      payment_note: paymentNote,
+    }).select().single()
 
     if (error || !order) { setLoading(false); return }
 
-    await supabase.from('order_items').insert(
-      cart.map(i => ({
-        order_id: order.id,
-        product_id: i.product.id,
-        qty: i.qty,
-        price: i.product.price,
-      }))
-    )
+    const items = cart.map(i => ({
+      order_id: order.id, product_id: i.product.id, qty: i.qty, price: i.product.price,
+    }))
+    await supabase.from('order_items').insert(items)
+    setOrderItems(prev => [...prev, ...items.map(i => ({
+      order_id: i.order_id, product_id: i.product_id, qty: i.qty
+    }))])
 
     // Hissa ayirish
     const hissaProducts = cart.filter(i => i.product.unit_type === 'hissa')
     if (hissaProducts.length > 0 && shift) {
       const totalAyirildi = hissaProducts.reduce((s, i) => s + i.product.hissa_per_unit * i.qty, 0)
-      const currentHissa = hissaStock[shift.id] || 0
-      const newHissa = Math.max(0, currentHissa - totalAyirildi)
-
-      const { data: existing } = await supabase
-        .from('osh_stock')
-        .select('*')
-        .eq('shift_id', shift.id)
-        .eq('product_group', 'osh')
-        .maybeSingle()
-
+      const newHissa = Math.max(0, (hissaStock[shift.id] || 0) - totalAyirildi)
+      const { data: existing } = await supabase.from('osh_stock').select('*')
+        .eq('shift_id', shift.id).eq('product_group', 'osh').maybeSingle()
       if (existing) {
         await supabase.from('osh_stock')
-          .update({ total_hissa: newHissa, updated_at: new Date().toISOString() })
-          .eq('id', existing.id)
+          .update({ total_hissa: newHissa, updated_at: new Date().toISOString() }).eq('id', existing.id)
       }
-
       setHissaStock(prev => ({ ...prev, [shift.id]: newHissa }))
     }
 
     updateBillCart([])
-    setDebtorName('')
-    setPayType('naqd')
-    setActiveModal(null)
-    setLoading(false)
+    setDebtorName(''); setDebtorPhone(''); setSelectedDebtorId(''); setDebtorSearch('')
+    setPayType('naqd'); setMoslashuvActual(null); setActiveModal(null); setLoading(false)
     showToast(`✅ Hisob ${activeBillId} tasdiqlandi!`)
   }
 
@@ -312,44 +492,33 @@ export default function CashierPage() {
     const prod = products.find(p => p.id === selectedProd)
 
     const { data: newSi } = await supabase.from('stock_ins').insert({
-      shift_id: shift?.id || null,
-      product_id: selectedProd,
-      qty: parseFloat(qty),
-      worker_id: u.id,
+      shift_id: shift?.id || null, product_id: selectedProd,
+      qty: parseFloat(qty), worker_id: u.id,
     }).select().single()
-
-    // StockIns state ni yangilash
     if (newSi) setStockIns(prev => [...prev, newSi])
 
     if (prod?.unit_type === 'hissa' && shift) {
-      const kgMiqdor = parseFloat(qty)
-      const yangiHissa = Math.round(kgMiqdor * (prod.kg_to_hissa || 21))
-      const currentHissa = hissaStock[shift.id] || 0
-      const newHissa = currentHissa + yangiHissa
-
-      const { data: existing } = await supabase
-        .from('osh_stock')
-        .select('*')
-        .eq('shift_id', shift.id)
-        .eq('product_group', 'osh')
-        .maybeSingle()
-
+      const yangiHissa = Math.round(parseFloat(qty) * (prod.kg_to_hissa || 21))
+      const newHissa = (hissaStock[shift.id] || 0) + yangiHissa
+      const { data: existing } = await supabase.from('osh_stock').select('*')
+        .eq('shift_id', shift.id).eq('product_group', 'osh').maybeSingle()
       if (existing) {
         await supabase.from('osh_stock')
-          .update({ total_hissa: newHissa, updated_at: new Date().toISOString() })
-          .eq('id', existing.id)
+          .update({ total_hissa: newHissa, updated_at: new Date().toISOString() }).eq('id', existing.id)
       } else {
         await supabase.from('osh_stock')
           .insert({ shift_id: shift.id, product_group: 'osh', total_hissa: newHissa })
       }
-
       setHissaStock(prev => ({ ...prev, [shift.id]: newHissa }))
     }
 
+    const toastMsg = prod?.litr_per_unit
+      ? `✅ ${parseFloat(qty)}L = ${Math.floor(parseFloat(qty) / prod.litr_per_unit)} stakan kirim!`
+      : '✅ Kirim qilindi!'
+
     setSelectedProd(''); setQty('')
-    setActiveModal(null)
-    setLoading(false)
-    showToast('✅ Kirim qilindi!')
+    setActiveModal(null); setLoading(false)
+    showToast(toastMsg)
   }
 
   // CHIQIM
@@ -358,17 +527,17 @@ export default function CashierPage() {
     setLoading(true)
     const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
 
-    await supabase.from('write_offs').insert({
-      shift_id: shift?.id || null,
-      product_id: selectedProd,
-      qty: parseInt(qty),
-      reason: reason.trim(),
-      worker_id: u.id,
-    })
+    const { data: newWo } = await supabase.from('write_offs').insert({
+      shift_id: shift?.id || null, product_id: selectedProd,
+      qty: parseInt(qty), reason: reason.trim(), worker_id: u.id,
+    }).select().single()
+
+    if (newWo) setWriteOffs(prev => [...prev, {
+      id: newWo.id, product_id: newWo.product_id, qty: newWo.qty
+    }])
 
     setSelectedProd(''); setQty(''); setReason('')
-    setActiveModal(null)
-    setLoading(false)
+    setActiveModal(null); setLoading(false)
     showToast('⚠️ Chiqim qilindi!')
   }
 
@@ -382,29 +551,41 @@ export default function CashierPage() {
           <div className="text-gray-500 text-xs">{user?.name} · Kassir</div>
         </div>
         <div style={{display:'flex', alignItems:'center', gap:'6px', flexShrink:0}}>
-          {timeLeft > 0 && (
-            <div style={{padding:'4px 8px', borderRadius:'8px', fontSize:'11px', fontWeight:900, background:'rgba(61,46,16,0.8)', color:'#F5C842', flexShrink:0}}>
-              ⏱ {Math.floor(timeLeft / 60000)}:{String(Math.floor((timeLeft % 60000) / 1000)).padStart(2, '0')}
-            </div>
-          )}
           <button onClick={() => setActiveModal('smena')} style={{width:'32px', height:'32px', borderRadius:'8px', border: shift ? '1px solid #22c55e' : '1px solid #ef4444', background: shift ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)', color: shift ? '#4ade80' : '#f87171', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer'}}>
             <Clock size={14}/>
           </button>
-          <button onClick={() => setActiveModal('kirим')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#F5C842', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}>
-            <PackagePlus size={13}/>
-          </button>
-          <button onClick={() => setActiveModal('chiqim')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#f87171', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}>
-            <PackageMinus size={13}/>
-          </button>
+          {shift && <>
+            <button onClick={() => setActiveModal('kirим')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#F5C842', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}>
+              <PackagePlus size={13}/>
+            </button>
+            <button onClick={() => setActiveModal('chiqim')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#f87171', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}>
+              <PackageMinus size={13}/>
+            </button>
+            <button onClick={() => setActiveModal('debtors')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#fbbf24', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}>
+              <Search size={13}/>
+            </button>
+          </>}
           <button onClick={() => { localStorage.removeItem('pos_user'); router.push('/') }} style={{width:'32px', height:'32px', borderRadius:'8px', border:'1px solid #4b5563', color:'#9ca3af', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', background:'transparent'}}>
             <LogOut size={13}/>
           </button>
         </div>
       </div>
 
-      {/* MAIN */}
-      <div className="flex flex-1 overflow-hidden">
+      {/* SMENA YOPIQ */}
+      {!shift ? (
+        <div className="flex-1 flex flex-col items-center justify-center gap-4 p-8">
+          <div className="text-5xl">🔒</div>
+          <div className="font-black text-xl text-[#1A1208]">Smena yopiq</div>
+          <div className="text-gray-400 text-sm text-center">Savdo boshlash uchun smena oching</div>
+          <button onClick={openShift} disabled={loading}
+            className="px-8 py-4 rounded-2xl font-black text-white text-base disabled:opacity-50"
+            style={{backgroundColor: '#1E7B47'}}>
+            {loading ? '...' : '🟢 Smena ochish'}
+          </button>
+        </div>
+      ) : (
 
+      <div className="flex flex-1 overflow-hidden">
         {/* CHAP: MENYU */}
         <div className="flex flex-col border-r border-[#E0DDD5]" style={{width:'62%'}}>
           <div className="bg-[#2C200A] px-3 py-2 flex gap-2 overflow-x-auto flex-shrink-0">
@@ -420,10 +601,17 @@ export default function CashierPage() {
             <div className="grid grid-cols-3 gap-3">
               {filteredProducts.map(p => {
                 const qty = cartQty(p.id)
+                const isHissa = p.unit_type === 'hissa'
                 const hissaQoldiq = getHissaQoldiq(p)
                 const donaQoldiq = getDonaQoldiq(p.id)
-                const isHissa = p.unit_type === 'hissa'
-                const tugadi = isHissa && hissaQoldiq === 0
+                const isKampot = !isHissa && p.litr_per_unit !== null && p.litr_per_unit > 0
+                const kampotStakan = isKampot && donaQoldiq !== null
+                  ? Math.floor(donaQoldiq / (p.litr_per_unit || 0.42)) : null
+                const tugadi = !p.is_unlimited && (
+                  isHissa ? hissaQoldiq === 0 :
+                  isKampot ? (kampotStakan !== null && kampotStakan <= 0) :
+                  donaQoldiq !== null && donaQoldiq <= 0
+                )
 
                 return (
                   <div key={p.id} onClick={() => addToCart(p)}
@@ -441,19 +629,22 @@ export default function CashierPage() {
                     <div className="p-3">
                       <div className="font-extrabold text-[#1A1208] text-sm leading-tight">{p.name}</div>
                       <div className="text-[#C8860A] font-black text-base mt-1">{fmt(p.price)} so'm</div>
+                      {/* QOLDIQ LABEL */}
                       {isHissa ? (
-                        <div className={`text-xs font-bold mt-1 ${
-                          hissaQoldiq === 0 ? 'text-red-500' :
-                          hissaQoldiq <= 5 ? 'text-orange-500' : 'text-green-600'
-                        }`}>
-                          {hissaQoldiq === 0 ? 'Tugadi!' : `Qoldiq: ${hissaQoldiq} ta`}
+                        <div className={`text-xs font-bold mt-1 ${hissaQoldiq === 0 ? 'text-red-500' : hissaQoldiq <= 5 ? 'text-orange-500' : 'text-green-600'}`}>
+                          {hissaQoldiq === 0 ? 'Kirim kerak' : `~${hissaQoldiq} ta`}
+                        </div>
+                      ) : isKampot ? (
+                        <div className={`text-xs font-bold mt-1 ${(kampotStakan || 0) <= 0 ? 'text-red-500' : (kampotStakan || 0) <= 5 ? 'text-orange-500' : 'text-green-600'}`}>
+                          {(kampotStakan || 0) <= 0 ? 'Kirim kerak' : `~${kampotStakan} stakan`}
+                        </div>
+                      ) : p.is_unlimited ? (
+                        <div className="text-xs text-gray-400 mt-1">
+                          {getQoldiqLabel(p)}
                         </div>
                       ) : donaQoldiq !== null ? (
-                        <div className={`text-xs font-bold mt-1 ${
-                          donaQoldiq === 0 ? 'text-red-500' :
-                          donaQoldiq <= 5 ? 'text-orange-500' : 'text-green-600'
-                        }`}>
-                          {donaQoldiq === 0 ? 'Tugadi!' : `Qoldiq: ${donaQoldiq} ta`}
+                        <div className={`text-xs font-bold mt-1 ${donaQoldiq <= 0 ? 'text-red-500' : donaQoldiq <= 5 ? 'text-orange-500' : 'text-green-600'}`}>
+                          {donaQoldiq <= 0 ? 'Tugadi!' : `Qoldiq: ${donaQoldiq} ta`}
                         </div>
                       ) : null}
                     </div>
@@ -523,10 +714,14 @@ export default function CashierPage() {
           </div>
 
           <div className="px-4 py-3 border-t-2 border-gray-100 flex-shrink-0">
-            <div className="flex justify-between items-baseline mb-3">
+            <div className="flex justify-between items-baseline mb-2">
               <span className="text-gray-500 font-bold text-sm">Jami:</span>
               <span className="text-[#C8860A] font-black text-2xl">{fmt(total)} so'm</span>
             </div>
+            <button onClick={() => setActiveModal('moslashuv')}
+              className="w-full py-2 rounded-xl bg-gray-100 text-gray-600 font-bold text-xs mb-2 hover:bg-gray-200 transition-all">
+              💱 Moslashuvchan to'lov
+            </button>
             <button disabled={cart.length === 0} onClick={() => setActiveModal('pay')}
               className="w-full py-3.5 rounded-xl bg-[#C8860A] text-[#1A1208] font-black text-base transition-all hover:bg-[#F5C842] disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
               Buyurtma berish
@@ -534,6 +729,58 @@ export default function CashierPage() {
           </div>
         </div>
       </div>
+      )}
+
+      {/* ===== MODALLAR ===== */}
+
+      {/* SMENA BOSHI — O'TGAN QOLDIQLAR */}
+      {activeModal === 'shift_start' && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-lg flex flex-col" style={{maxHeight:'92vh'}}>
+            <div className="px-5 py-4 border-b border-gray-100 flex-shrink-0">
+              <div className="font-black text-base">📋 O'tgan smena qoldiqlari</div>
+              <div className="text-xs text-gray-400 mt-1">Miqdorni tekshiring, kerak bo'lsa o'zgartiring</div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              {prevStocks.map((ps, i) => (
+                <div key={ps.product_id} className="bg-gray-50 rounded-xl p-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="flex-1 font-bold text-sm">{ps.name}</div>
+                    <input
+                      type="number"
+                      value={ps.qty}
+                      onChange={e => setPrevStocks(prev => prev.map((x, j) =>
+                        j === i ? { ...x, qty: parseFloat(e.target.value) || 0 } : x
+                      ))}
+                      className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-center text-sm font-bold outline-none focus:border-[#C8860A]"
+                    />
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Izoh (ixtiyoriy)..."
+                    value={ps.note}
+                    onChange={e => setPrevStocks(prev => prev.map((x, j) =>
+                      j === i ? { ...x, note: e.target.value } : x
+                    ))}
+                    className="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs outline-none focus:border-[#C8860A]"
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="px-4 py-3 border-t border-gray-100 flex-shrink-0 space-y-2">
+              <button onClick={doOpenShift} disabled={loading}
+                className="w-full py-3 rounded-xl font-black text-white text-sm disabled:opacity-50"
+                style={{backgroundColor: '#1E7B47'}}>
+                {loading ? '...' : '✅ Tasdiqlash va smena ochish'}
+              </button>
+              <button onClick={() => { setPrevStocks([]); doOpenShift() }}
+                className="w-full py-2 rounded-xl text-gray-400 text-xs font-bold hover:bg-gray-50">
+                Qoldiqsiz boshlash
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* SMENA MODAL */}
       {activeModal === 'smena' && (
@@ -546,29 +793,87 @@ export default function CashierPage() {
             {shift ? (
               <>
                 <div className="bg-green-50 border-2 border-green-400 rounded-xl p-4 mb-4">
-                  <div className="font-black text-green-700 text-base">✅ Smena ochiq</div>
+                  <div className="font-black text-green-700">✅ Smena ochiq</div>
                   <div className="text-sm text-gray-500 mt-1">
                     Boshlangan: {new Date(shift.opened_at).toLocaleTimeString('uz-UZ', {hour:'2-digit', minute:'2-digit'})}
                   </div>
                 </div>
-                <button onClick={closeShift} disabled={loading}
-                  className="w-full py-4 rounded-xl font-black text-base text-white disabled:opacity-50"
+                <button onClick={() => setActiveModal('close_shift')}
+                  className="w-full py-4 rounded-xl font-black text-base text-white"
                   style={{backgroundColor: '#B83232'}}>
-                  {loading ? '...' : '🔴 Smena yopish'}
+                  🔴 Smena yopish
                 </button>
               </>
             ) : (
-              <>
-                <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4 mb-4">
-                  <div className="font-black text-red-600 text-base">⭕ Smena yopiq</div>
-                </div>
-                <button onClick={openShift} disabled={loading}
-                  className="w-full py-4 rounded-xl font-black text-base text-white disabled:opacity-50"
-                  style={{backgroundColor: '#1E7B47'}}>
-                  {loading ? '...' : '🟢 Smena ochish'}
-                </button>
-              </>
+              <button onClick={openShift} disabled={loading}
+                className="w-full py-4 rounded-xl font-black text-base text-white disabled:opacity-50"
+                style={{backgroundColor: '#1E7B47'}}>
+                {loading ? '...' : '🟢 Smena ochish'}
+              </button>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* SMENA YOPISH HISOBOTI */}
+      {activeModal === 'close_shift' && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-lg flex flex-col" style={{maxHeight:'92vh'}}>
+            <div className="px-5 py-4 border-b border-gray-100 flex justify-between items-center flex-shrink-0">
+              <div className="font-black text-base">📊 Smena yopish hisoboti</div>
+              <button onClick={() => setActiveModal('smena')} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">✕</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="text-xs text-gray-400 mb-3 font-bold">
+                Har mahsulot uchun haqiqiy qoldiqni kiriting. Bo'sh qoldirsangiz — tizim hisobi qabul qilinadi.
+              </div>
+              {products.filter(p => p.is_available).map(p => {
+                const sysQty = getSystemQty(p)
+                const rep = shiftReport[p.id] || { actual: '', note: '' }
+                const actual = rep.actual === '' ? sysQty : parseFloat(rep.actual)
+                const diff = actual - sysQty
+                return (
+                  <div key={p.id} className="mb-3 p-3 bg-gray-50 rounded-xl">
+                    <div className="flex items-center gap-2 mb-1">
+                      <div className="flex-1 font-bold text-sm truncate">{p.name}</div>
+                      <div className="text-xs text-gray-400 flex-shrink-0">Tizim: <b>{sysQty}</b></div>
+                      <input
+                        type="number"
+                        placeholder={String(sysQty)}
+                        value={rep.actual}
+                        onChange={e => setShiftReport(prev => ({
+                          ...prev, [p.id]: { ...rep, actual: e.target.value }
+                        }))}
+                        className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-center text-sm font-bold outline-none focus:border-[#C8860A] flex-shrink-0"
+                      />
+                    </div>
+                    {rep.actual !== '' && diff !== 0 && (
+                      <>
+                        <div className={`text-xs font-bold mb-1 ${diff < 0 ? 'text-red-500' : 'text-green-600'}`}>
+                          Farq: {diff > 0 ? '+' : ''}{diff} ta
+                        </div>
+                        <input
+                          type="text"
+                          placeholder="Izoh (majburiy)..."
+                          value={rep.note}
+                          onChange={e => setShiftReport(prev => ({
+                            ...prev, [p.id]: { ...rep, note: e.target.value }
+                          }))}
+                          className="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs outline-none focus:border-[#C8860A]"
+                        />
+                      </>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            <div className="px-4 py-3 border-t border-gray-100 flex-shrink-0">
+              <button onClick={closeShift} disabled={loading}
+                className="w-full py-3 rounded-xl font-black text-white text-sm disabled:opacity-50"
+                style={{backgroundColor: '#B83232'}}>
+                {loading ? '...' : '✅ Tasdiqlash va smena yopish'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -576,14 +881,19 @@ export default function CashierPage() {
       {/* TO'LOV MODAL */}
       {activeModal === 'pay' && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center">
-          <div className="bg-white rounded-t-3xl p-6 w-full max-w-md">
+          <div className="bg-white rounded-t-3xl p-6 w-full max-w-md" style={{maxHeight:'90vh', overflowY:'auto'}}>
             <div className="flex justify-between items-center mb-4">
-              <div className="font-black text-lg">Hisob № {activeBillId} — To'lov</div>
-              <button onClick={() => setActiveModal(null)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center font-bold">✕</button>
+              <div className="font-black text-lg">Hisob № {activeBillId}</div>
+              <button onClick={() => setActiveModal(null)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">✕</button>
             </div>
-            <div className="text-gray-400 text-sm mb-1">Jami summa:</div>
-            <div className="text-[#C8860A] font-black text-3xl mb-4">{fmt(total)} so'm</div>
-            <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="text-[#C8860A] font-black text-3xl mb-1">{fmt(total)} so'm</div>
+            {moslashuvActual && moslashuvActual !== total && (
+              <div className={`text-sm font-bold mb-3 ${moslashuvActual > total ? 'text-green-600' : 'text-orange-500'}`}>
+                Haqiqiy to'lov: {fmt(moslashuvActual)} so'm
+                ({moslashuvActual > total ? '+' : ''}{fmt(moslashuvActual - total)} so'm)
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-3 mb-4 mt-3">
               {(['naqd', 'click', 'karta', 'qarz', 'ichki'] as const).map(t => (
                 <button key={t} type="button" onClick={() => setPayType(t)}
                   className={`py-3 rounded-xl border-2 font-bold text-sm transition-all ${payType === t ? 'border-[#C8860A] bg-[#FFF8E7] text-[#1A1208]' : 'border-gray-200 bg-gray-50 text-gray-500'}`}>
@@ -591,20 +901,116 @@ export default function CashierPage() {
                 </button>
               ))}
             </div>
+
             {payType === 'qarz' && (
-              <input type="text" placeholder="Mijoz ismi" value={debtorName}
-                onChange={e => setDebtorName(e.target.value)}
-                className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-4 outline-none focus:border-[#C8860A]"/>
+              <div className="space-y-2 mb-4">
+                <div className="text-xs font-bold text-gray-500">Qarzdorni qidiring:</div>
+                <div className="relative">
+                  <Search size={14} className="absolute left-3 top-3 text-gray-400"/>
+                  <input type="text" placeholder="Ism yoki telefon..."
+                    value={debtorSearch}
+                    onChange={e => { setDebtorSearch(e.target.value); setSelectedDebtorId('') }}
+                    className="w-full border border-gray-200 rounded-xl pl-9 pr-4 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
+                </div>
+                {debtorSearch && !selectedDebtorId && (
+                  <div className="border border-gray-200 rounded-xl overflow-hidden max-h-32 overflow-y-auto">
+                    {filteredDebtors.length === 0 ? (
+                      <div className="px-4 py-2 text-xs text-gray-400">Topilmadi — yangi sifatida qo'shiladi</div>
+                    ) : filteredDebtors.map(d => (
+                      <button key={d.id} type="button"
+                        onClick={() => { setSelectedDebtorId(d.id); setDebtorSearch(d.name) }}
+                        className="w-full text-left px-4 py-2 text-sm border-b border-gray-50 hover:bg-gray-50">
+                        <span className="font-bold">{d.name}</span>
+                        {d.phone && <span className="text-gray-400 text-xs ml-2">{d.phone}</span>}
+                        <span className="text-red-500 text-xs ml-2 float-right">{fmt(d.total_debt)} so'm</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {selectedDebtorId && (
+                  <div className="flex items-center justify-between bg-[#FFF8E7] border border-[#F5C842] rounded-xl px-4 py-2">
+                    <span className="font-bold text-sm">{debtors.find(d => d.id === selectedDebtorId)?.name}</span>
+                    <button type="button" onClick={() => { setSelectedDebtorId(''); setDebtorSearch('') }}
+                      className="text-gray-400 hover:text-red-500 text-xs">✕</button>
+                  </div>
+                )}
+                {!selectedDebtorId && !debtorSearch && (
+                  <input type="text" placeholder="Yangi mijoz ismi *" value={debtorName}
+                    onChange={e => setDebtorName(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
+                )}
+              </div>
             )}
+
             {payType === 'ichki' && (
               <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 mb-4 text-sm text-yellow-700 font-bold">
                 ⚠️ Bu buyurtma tushum hisobiga kirmaydi
               </div>
             )}
-            <button onClick={confirmOrder} disabled={loading}
+            <button onClick={confirmOrder}
+              disabled={loading || (payType === 'qarz' && !selectedDebtorId && !debtorName.trim() && !debtorSearch.trim())}
               className="w-full py-4 rounded-xl bg-[#1E7B47] text-white font-black text-base disabled:opacity-50">
               {loading ? 'Saqlanmoqda...' : '✓ Tasdiqlash'}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* MOSLASHUVCHAN TO'LOV */}
+      {activeModal === 'moslashuv' && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center">
+          <div className="bg-white rounded-t-3xl p-6 w-full max-w-md">
+            <div className="flex justify-between items-center mb-4">
+              <div className="font-black text-lg">💱 Moslashuvchan to'lov</div>
+              <button onClick={() => { setActiveModal(null); setMoslashuvSumma('') }}
+                className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">✕</button>
+            </div>
+            <div className="text-gray-400 text-sm mb-1">Asl narx:</div>
+            <div className="text-[#C8860A] font-black text-2xl mb-4">{fmt(total)} so'm</div>
+            <input type="number" placeholder="Haqiqiy to'lov summasi"
+              value={moslashuvSumma}
+              onChange={e => setMoslashuvSumma(e.target.value)}
+              className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-lg font-bold outline-none focus:border-[#C8860A] mb-3"/>
+
+            {moslashuvSumma && parseInt(moslashuvSumma) > 0 && (() => {
+              const berildi = parseInt(moslashuvSumma)
+              const farq = berildi - total
+              const ruxsat = Math.abs(farq) <= 1000
+              return (
+                <div className={`rounded-xl p-4 mb-4 border-2 ${!ruxsat ? 'bg-red-50 border-red-300' : farq > 0 ? 'bg-green-50 border-green-300' : farq < 0 ? 'bg-orange-50 border-orange-300' : 'bg-green-50 border-green-300'}`}>
+                  {farq === 0 && <div className="text-center font-black text-green-600 text-lg">✅ Aynan to'g'ri!</div>}
+                  {farq > 0 && ruxsat && (
+                    <div className="text-center">
+                      <div className="font-black text-green-600 text-xl">+{fmt(farq)} so'm ortiqcha</div>
+                      <div className="text-xs text-gray-500 mt-1">Mijoz {fmt(farq)} so'm ko'proq bermoqda</div>
+                    </div>
+                  )}
+                  {farq < 0 && ruxsat && (
+                    <div className="text-center">
+                      <div className="font-black text-orange-600 text-xl">{fmt(Math.abs(farq))} so'm kam</div>
+                      <div className="text-xs text-gray-500 mt-1">Kassir rozilik bildirdi</div>
+                    </div>
+                  )}
+                  {!ruxsat && (
+                    <div className="text-center">
+                      <div className="font-black text-red-600 text-lg">❌ Ruxsat yo'q!</div>
+                      <div className="text-xs text-red-400 mt-1">Farq 1000 so'mdan oshmasligi kerak</div>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+
+            {moslashuvSumma && Math.abs(parseInt(moslashuvSumma) - total) <= 1000 && parseInt(moslashuvSumma) > 0 && (
+              <button onClick={() => {
+                setMoslashuvActual(parseInt(moslashuvSumma))
+                setActiveModal('pay')
+                setMoslashuvSumma('')
+              }}
+                className="w-full py-4 rounded-xl bg-[#1E7B47] text-white font-black text-base">
+                ✓ To'lovga o'tish
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -615,36 +1021,55 @@ export default function CashierPage() {
           <div className="bg-white rounded-t-3xl p-6 w-full max-w-md">
             <div className="flex justify-between items-center mb-4">
               <div className="font-black text-lg text-[#1E7B47]">📦 Mahsulot kirim</div>
-              <button onClick={() => setActiveModal(null)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">✕</button>
+              <button onClick={() => { setActiveModal(null); setSelectedProd(''); setQty('') }}
+                className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">✕</button>
             </div>
-            <select value={selectedProd} onChange={e => setSelectedProd(e.target.value)}
+            <select value={selectedProd} onChange={e => { setSelectedProd(e.target.value); setQty('') }}
               className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-3 outline-none focus:border-[#C8860A] bg-white">
               <option value="">Mahsulot tanlang</option>
               {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
-
-            {selectedProd && products.find(p => p.id === selectedProd)?.unit_type === 'hissa' ? (
-              <div>
-                <input type="number" placeholder="Miqdor (kg)" value={qty}
-                  onChange={e => setQty(e.target.value)}
-                  className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-2 outline-none focus:border-[#C8860A]"/>
-                {qty && parseFloat(qty) > 0 && (
-                  <div className="bg-[#FFF8E7] border border-[#F5C842] rounded-xl px-4 py-3 text-sm mb-3">
-                    <div className="font-bold text-[#C8860A] mb-1">{parseFloat(qty)} kg kirim:</div>
-                    <div className="flex gap-4">
-                      <span className="text-gray-600">Hissa: <b>{Math.round(parseFloat(qty) * 21)}</b></span>
-                      <span className="text-green-600">Butun: <b>{Math.floor(parseFloat(qty) * 7)}</b></span>
-                      <span className="text-blue-600">Yarim: <b>{Math.floor(parseFloat(qty) * 21 / 2)}</b></span>
+            {selectedProd && (() => {
+              const prod = products.find(p => p.id === selectedProd)
+              if (!prod) return null
+              if (prod.unit_type === 'hissa') return (
+                <div>
+                  <input type="number" placeholder="Miqdor (kg)" value={qty}
+                    onChange={e => setQty(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-2 outline-none focus:border-[#C8860A]"/>
+                  {qty && parseFloat(qty) > 0 && (
+                    <div className="bg-[#FFF8E7] border border-[#F5C842] rounded-xl px-4 py-3 text-sm mb-3">
+                      <div className="font-bold text-[#C8860A] mb-1">{parseFloat(qty)} kg:</div>
+                      <div className="flex gap-4">
+                        <span className="text-green-600">Butun: <b>{Math.floor(parseFloat(qty) * 7)}</b></span>
+                        <span className="text-blue-600">Yarim: <b>{Math.floor(parseFloat(qty) * 21 / 2)}</b></span>
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <input type="number" placeholder="Miqdor (dona)" value={qty}
-                onChange={e => setQty(e.target.value)}
-                className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-4 outline-none focus:border-[#C8860A]"/>
-            )}
-
+                  )}
+                </div>
+              )
+              if (prod.litr_per_unit) return (
+                <div>
+                  <input type="number" placeholder="Miqdor (litr)" value={qty}
+                    onChange={e => setQty(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-2 outline-none focus:border-[#C8860A]"/>
+                  {qty && parseFloat(qty) > 0 && (
+                    <div className="bg-[#FFF8E7] border border-[#F5C842] rounded-xl px-4 py-3 text-sm mb-3 text-center">
+                      <span className="font-bold text-[#C8860A]">{parseFloat(qty)} litr</span>
+                      <span className="text-gray-500"> = </span>
+                      <span className="font-black text-green-600 text-lg">
+                        {Math.floor(parseFloat(qty) / prod.litr_per_unit)} stakan
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )
+              return (
+                <input type="number" placeholder="Miqdor (dona)" value={qty}
+                  onChange={e => setQty(e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-4 outline-none focus:border-[#C8860A]"/>
+              )
+            })()}
             <button onClick={confirmKirim} disabled={loading || !selectedProd || !qty}
               className="w-full py-4 rounded-xl bg-[#1E7B47] text-white font-black text-base disabled:opacity-50">
               {loading ? '...' : '✓ Kirim qilish'}
@@ -659,7 +1084,8 @@ export default function CashierPage() {
           <div className="bg-white rounded-t-3xl p-6 w-full max-w-md">
             <div className="flex justify-between items-center mb-4">
               <div className="font-black text-lg text-[#B83232]">⚠️ Mahsulot chiqim</div>
-              <button onClick={() => setActiveModal(null)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">✕</button>
+              <button onClick={() => { setActiveModal(null); setSelectedProd(''); setQty(''); setReason('') }}
+                className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">✕</button>
             </div>
             <select value={selectedProd} onChange={e => setSelectedProd(e.target.value)}
               className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-3 outline-none focus:border-[#C8860A] bg-white">
@@ -676,6 +1102,44 @@ export default function CashierPage() {
               className="w-full py-4 rounded-xl bg-[#B83232] text-white font-black text-base disabled:opacity-50">
               {loading ? '...' : '⚠️ Chiqim qilish'}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* QARZDORLAR MODAL */}
+      {activeModal === 'debtors' && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md flex flex-col" style={{maxHeight:'85vh'}}>
+            <div className="px-5 py-4 border-b border-gray-100 flex justify-between items-center flex-shrink-0">
+              <div className="font-black text-base">📝 Qarzdorlar</div>
+              <button onClick={() => { setActiveModal(null); setDebtorSearch('') }}
+                className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">✕</button>
+            </div>
+            <div className="px-4 py-3 border-b border-gray-100 flex-shrink-0">
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-3 text-gray-400"/>
+                <input type="text" placeholder="Ism yoki telefon..."
+                  value={debtorSearch} onChange={e => setDebtorSearch(e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl pl-9 pr-4 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {filteredDebtors.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-32 text-gray-300">
+                  <div className="text-3xl mb-2">🔍</div>
+                  <div className="text-sm font-bold">Topilmadi</div>
+                </div>
+              ) : filteredDebtors.map(d => (
+                <DebtorCard
+                  key={d.id}
+                  debtor={d}
+                  products={products}
+                  onUpdate={(id, newDebt) => {
+                    setDebtors(prev => prev.map(x => x.id === id ? { ...x, total_debt: newDebt } : x))
+                  }}
+                />
+              ))}
+            </div>
           </div>
         </div>
       )}

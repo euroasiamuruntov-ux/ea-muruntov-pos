@@ -3,26 +3,27 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import jsPDF from 'jspdf'
-import { Clock, UtensilsCrossed, Users, BarChart3, LogOut, PackagePlus, PackageMinus } from 'lucide-react'
+import { Clock, UtensilsCrossed, Users, BarChart3, LogOut, PackagePlus, PackageMinus, Search, ChevronDown, ChevronUp } from 'lucide-react'
+import DebtorCard from '../cashier/components/DebtorCard'
 
 type User = { id: string; name: string; role: string }
 type Category = { id: string; name: string; order_num: number }
 type Product = { id: string; name: string; price: number; category_id: string; is_available: boolean }
 type Shift = { id: string; is_open: boolean; opened_at: string; closed_at?: string; opened_by?: string; closed_by?: string }
 type ShiftStock = { product_id: string; initial_qty: number }
-type Order = { id: string; total: number; pay_type: string; debt_paid: boolean; debtor_name: string | null; worker_id: string; created_at: string }
+type Order = { id: string; total: number; pay_type: string; debt_paid: boolean; debtor_name: string | null; worker_id: string; created_at: string; actual_paid?: number; payment_note?: string }
 type OrderItem = { order_id: string; product_id: string; qty: number; price: number }
 type Worker = { id: string; name: string; pin: string; role: string }
 type WriteOff = { id: string; product_id: string; qty: number; reason: string; worker_id: string; created_at: string }
 type StockIn = { id: string; product_id: string; qty: number; worker_id: string; created_at: string }
+type Debtor = { id: string; name: string; phone: string; total_debt: number }
 
-type Tab = 'smena' | 'mahsulot' | 'xodim' | 'hisobot'
+type Tab = 'hisobot' | 'smena' | 'mahsulot' | 'xodim' | 'qarzdorlar'
 
 export default function AdminPage() {
   const router = useRouter()
   const [user, setUser] = useState<User | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('hisobot')
-
   const [categories, setCategories] = useState<Category[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [oshHissa, setOshHissa] = useState(0)
@@ -33,6 +34,8 @@ export default function AdminPage() {
   const [workers, setWorkers] = useState<Worker[]>([])
   const [writeOffs, setWriteOffs] = useState<WriteOff[]>([])
   const [stockIns, setStockIns] = useState<StockIn[]>([])
+  const [debtors, setDebtors] = useState<Debtor[]>([])
+  const [debtorSearch, setDebtorSearch] = useState('')
 
   const [newCatName, setNewCatName] = useState('')
   const [newProdName, setNewProdName] = useState('')
@@ -42,7 +45,6 @@ export default function AdminPage() {
   const [newWorkerPin, setNewWorkerPin] = useState('')
 
   const [toast, setToast] = useState('')
-  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     const u = localStorage.getItem('pos_user')
@@ -55,14 +57,11 @@ export default function AdminPage() {
 
   const loadAll = async () => {
     const [
-      { data: cats },
-      { data: prods },
-      { data: shifts },
-      { data: ords },
-      { data: oi },
-      { data: wrks },
-      { data: wo },
-      { data: si },
+      { data: cats }, { data: prods },
+      { data: shifts }, { data: ords },
+      { data: oi }, { data: wrks },
+      { data: wo }, { data: si },
+      { data: dbtrs },
     ] = await Promise.all([
       supabase.from('categories').select('*').order('order_num'),
       supabase.from('products').select('*').order('created_at'),
@@ -72,6 +71,7 @@ export default function AdminPage() {
       supabase.from('users').select('*').eq('role', 'worker'),
       supabase.from('write_offs').select('*').order('created_at', { ascending: false }),
       supabase.from('stock_ins').select('*').order('created_at', { ascending: false }),
+      supabase.from('debtors').select('*').order('name'),
     ])
     setCategories(cats || [])
     setProducts(prods || [])
@@ -81,29 +81,21 @@ export default function AdminPage() {
     setWorkers(wrks || [])
     setWriteOffs(wo || [])
     setStockIns(si || [])
+    setDebtors(dbtrs || [])
 
     if (shifts?.id) {
-  const { data: st } = await supabase.from('shift_stock').select('*').eq('shift_id', shifts.id)
-  setStocks(st || [])
-
-  // Osh hissa
-  const { data: oh } = await supabase
-    .from('osh_stock')
-    .select('*')
-    .eq('shift_id', shifts.id)
-    .maybeSingle()
-  setOshHissa(oh?.total_hissa || 0)
-}
+      const { data: st } = await supabase.from('shift_stock').select('*').eq('shift_id', shifts.id)
+      setStocks(st || [])
+      const { data: oh } = await supabase.from('osh_stock').select('*').eq('shift_id', shifts.id).maybeSingle()
+      setOshHissa(oh?.total_hissa || 0)
+    }
   }
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 2500) }
   const fmt = (n: number) => n.toLocaleString('uz-UZ')
-
-  // Yordamchi funksiyalar
   const workerName = (id: string) => workers.find(w => w.id === id)?.name || 'Noma\'lum'
   const productName = (id: string) => products.find(p => p.id === id)?.name || 'Noma\'lum'
 
-  // Smena
   const toggleAvail = async (p: Product) => {
     await supabase.from('products').update({ is_available: !p.is_available }).eq('id', p.id)
     setProducts(prev => prev.map(x => x.id === p.id ? { ...x, is_available: !x.is_available } : x))
@@ -115,7 +107,6 @@ export default function AdminPage() {
     await supabase.from('shift_stock').update({ initial_qty: qty }).eq('shift_id', shift.id).eq('product_id', productId)
   }
 
-  // Kategoriya
   const addCategory = async () => {
     if (!newCatName.trim()) return
     const { data } = await supabase.from('categories').insert({ name: newCatName.trim(), order_num: categories.length + 1 }).select().single()
@@ -127,7 +118,6 @@ export default function AdminPage() {
     setCategories(p => p.filter(c => c.id !== id))
   }
 
-  // Mahsulot
   const addProduct = async () => {
     if (!newProdName.trim() || !newProdPrice || !newProdCat) return
     const { data } = await supabase.from('products').insert({ name: newProdName.trim(), price: parseInt(newProdPrice), category_id: newProdCat, is_available: true }).select().single()
@@ -139,7 +129,6 @@ export default function AdminPage() {
     setProducts(p => p.filter(x => x.id !== id))
   }
 
-  // Xodim
   const addWorker = async () => {
     if (!newWorkerName.trim() || newWorkerPin.length !== 4) return
     const { data } = await supabase.from('users').insert({ name: newWorkerName.trim(), pin: newWorkerPin, role: 'worker' }).select().single()
@@ -151,27 +140,20 @@ export default function AdminPage() {
     setWorkers(p => p.filter(x => x.id !== id))
   }
 
-  // Hisobot hisob-kitobi
-  const shiftOrders = shift ? orders.filter(o => {
-    const oDate = new Date(o.created_at)
-    const sDate = new Date(shift.opened_at)
-    return oDate >= sDate
-  }) : orders
-
+  const shiftOrders = shift ? orders.filter(o => new Date(o.created_at) >= new Date(shift.opened_at)) : orders
   const totalRev = shiftOrders.filter(o => o.pay_type !== 'ichki').reduce((s, o) => s + o.total, 0)
-  const cashRev = shiftOrders.reduce((s, o) => s + (o.pay_type === 'naqd' ? o.total : 0), 0)
-  const cardRev = shiftOrders.reduce((s, o) => s + (o.pay_type === 'karta' ? o.total : 0), 0)
-  const clickRev = shiftOrders.reduce((s, o) => s + (o.pay_type === 'click' ? o.total : 0), 0)
+  const actualRev = shiftOrders.filter(o => o.pay_type !== 'ichki').reduce((s, o) => s + (o.actual_paid ?? o.total), 0)
+  const cashRev = shiftOrders.reduce((s, o) => s + (o.pay_type === 'naqd' ? (o.actual_paid ?? o.total) : 0), 0)
+  const cardRev = shiftOrders.reduce((s, o) => s + (o.pay_type === 'karta' ? (o.actual_paid ?? o.total) : 0), 0)
+  const clickRev = shiftOrders.reduce((s, o) => s + (o.pay_type === 'click' ? (o.actual_paid ?? o.total) : 0), 0)
   const debtRev = shiftOrders.reduce((s, o) => s + (o.pay_type === 'qarz' ? o.total : 0), 0)
   const ichkiOrders = shiftOrders.filter(o => o.pay_type === 'ichki')
   const activeDebts = shiftOrders.filter(o => o.pay_type === 'qarz' && !o.debt_paid)
+  const moslashuvOrders = shiftOrders.filter(o => o.payment_note)
 
-  // Har mahsulotdan nechta sotildi
   const soldByProduct = products.map(p => {
     const shiftOrderIds = shiftOrders.map(o => o.id)
-    const sold = orderItems
-      .filter(oi => oi.product_id === p.id && shiftOrderIds.includes(oi.order_id))
-      .reduce((s, oi) => s + oi.qty, 0)
+    const sold = orderItems.filter(oi => oi.product_id === p.id && shiftOrderIds.includes(oi.order_id)).reduce((s, oi) => s + oi.qty, 0)
     const stock = stocks.find(s => s.product_id === p.id)
     const writeOff = writeOffs.filter(w => w.product_id === p.id && shift && new Date(w.created_at) >= new Date(shift.opened_at)).reduce((s, w) => s + w.qty, 0)
     const stockIn = stockIns.filter(si => si.product_id === p.id && shift && new Date(si.created_at) >= new Date(shift.opened_at)).reduce((s, si) => s + si.qty, 0)
@@ -185,205 +167,186 @@ export default function AdminPage() {
     showToast('✅ Qarz yopildi!')
   }
 
-  // PDF
+  const filteredDebtors = debtors.filter(d =>
+    d.name.toLowerCase().includes(debtorSearch.toLowerCase()) ||
+    (d.phone || '').includes(debtorSearch)
+  )
+
   const generatePDF = () => {
     const doc = new jsPDF()
     let y = 20
-
     doc.setFontSize(18); doc.setFont('helvetica', 'bold')
     doc.text('EA MURUNTOV - Smena Hisoboti', 105, y, { align: 'center' }); y += 10
-
     doc.setFontSize(10); doc.setFont('helvetica', 'normal')
-    doc.text(`Sana: ${new Date().toLocaleDateString('ru-RU')}`, 105, y, { align: 'center' }); y += 6
-    if (shift) {
-      doc.text(`Smena boshlangan: ${new Date(shift.opened_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`, 105, y, { align: 'center' })
-      y += 6
-      if (shift.opened_by) { doc.text(`Kim ochdi: ${workerName(shift.opened_by)}`, 105, y, { align: 'center' }); y += 6 }
-    }
-
+    doc.text(`Sana: ${new Date().toLocaleDateString('ru-RU')}`, 105, y, { align: 'center' }); y += 8
     doc.setLineWidth(0.5); doc.line(20, y, 190, y); y += 8
 
-    // Statistika
     doc.setFontSize(12); doc.setFont('helvetica', 'bold')
     doc.text('Moliyaviy ko\'rsatkichlar:', 20, y); y += 8
     doc.setFontSize(10); doc.setFont('helvetica', 'normal')
     const stats = [
       ['Jami buyurtmalar:', `${shiftOrders.length} ta`],
-      ['Jami tushum:', `${fmt(totalRev)} som`],
+      ['Jami narx:', `${fmt(totalRev)} som`],
+      ['Haqiqiy tushum:', `${fmt(actualRev)} som`],
       ['Naqd:', `${fmt(cashRev)} som`],
       ['Click:', `${fmt(clickRev)} som`],
       ['Karta:', `${fmt(cardRev)} som`],
       ['Qarz:', `${fmt(debtRev)} som`],
-      ['Ichki iste\'mol:', `${ichkiOrders.length} ta buyurtma`],
+      ['Ichki iste\'mol:', `${ichkiOrders.length} ta`],
     ]
     stats.forEach(([l, v]) => { doc.text(l, 25, y); doc.text(v, 140, y); y += 7 })
 
-    y += 4; doc.line(20, y, 190, y); y += 8
+    if (moslashuvOrders.length > 0) {
+      y += 4; doc.line(20, y, 190, y); y += 8
+      doc.setFontSize(11); doc.setFont('helvetica', 'bold')
+      doc.text('Moslashuvchan to\'lovlar:', 20, y); y += 7
+      doc.setFontSize(9); doc.setFont('helvetica', 'normal')
+      moslashuvOrders.forEach(o => {
+        if (y > 265) { doc.addPage(); y = 20 }
+        doc.text(`${fmt(o.total)} → ${fmt(o.actual_paid || o.total)} so'm`, 25, y)
+        doc.text(o.payment_note || '', 90, y)
+        y += 6
+      })
+    }
 
-    // Mahsulot hisobi
+    y += 4; doc.line(20, y, 190, y); y += 8
     doc.setFontSize(12); doc.setFont('helvetica', 'bold')
     doc.text('Mahsulot hisobi:', 20, y); y += 8
     doc.setFontSize(9); doc.setFont('helvetica', 'normal')
     doc.text('Mahsulot', 20, y); doc.text('Boshl.', 90, y); doc.text('Kirim', 110, y)
     doc.text('Sotildi', 130, y); doc.text('Chiqim', 150, y); doc.text('Qoldiq', 170, y); y += 6
-
     soldByProduct.forEach(p => {
       if (y > 270) { doc.addPage(); y = 20 }
       doc.text(p.name.slice(0, 30), 20, y)
-      doc.text(String(p.initial), 90, y)
-      doc.text(String(p.stockIn), 110, y)
-      doc.text(String(p.sold), 130, y)
-      doc.text(String(p.writeOff), 150, y)
-      doc.text(String(p.remaining), 170, y)
-      y += 6
+      doc.text(String(p.initial), 92, y); doc.text(String(p.stockIn), 112, y)
+      doc.text(String(p.sold), 132, y); doc.text(String(p.writeOff), 152, y)
+      doc.text(String(p.remaining), 172, y); y += 6
     })
 
-    // Chiqimlar
-    if (writeOffs.length > 0) {
-      y += 4; doc.line(20, y, 190, y); y += 8
-      doc.setFontSize(12); doc.setFont('helvetica', 'bold')
-      doc.text('Chiqimlar:', 20, y); y += 8
-      doc.setFontSize(9); doc.setFont('helvetica', 'normal')
-      writeOffs.slice(0, 10).forEach(w => {
-        if (y > 270) { doc.addPage(); y = 20 }
-        doc.text(`${productName(w.product_id)} — ${w.qty} ta`, 25, y)
-        doc.text(`${workerName(w.worker_id)}: ${w.reason}`, 100, y)
-        y += 6
-      })
-    }
-
-    // Kirimlar
-    if (stockIns.length > 0) {
-      y += 4; doc.line(20, y, 190, y); y += 8
-      doc.setFontSize(12); doc.setFont('helvetica', 'bold')
-      doc.text('Kirimlar:', 20, y); y += 8
-      doc.setFontSize(9); doc.setFont('helvetica', 'normal')
-      stockIns.slice(0, 10).forEach(si => {
-        if (y > 270) { doc.addPage(); y = 20 }
-        doc.text(`${productName(si.product_id)} — ${si.qty} ta`, 25, y)
-        doc.text(`Kim: ${workerName(si.worker_id)}`, 120, y)
-        y += 6
-      })
-    }
-
-    // Footer
     doc.setFontSize(8); doc.setTextColor(150)
     doc.text('Zarafshon Dasturchilari | EA Muruntov POS', 105, 285, { align: 'center' })
-
     doc.save(`ea-muruntov-${new Date().toLocaleDateString('ru-RU').replace(/\./g, '-')}.pdf`)
     showToast('✅ PDF yuklab olindi!')
   }
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    { id: 'hisobot', label: 'Hisobot', icon: <BarChart3 size={16}/> },
-    { id: 'smena', label: 'Smena', icon: <Clock size={16}/> },
-    { id: 'mahsulot', label: 'Menyu', icon: <UtensilsCrossed size={16}/> },
-    { id: 'xodim', label: 'Xodimlar', icon: <Users size={16}/> },
+    { id: 'hisobot', label: 'Hisobot', icon: <BarChart3 size={20}/> },
+    { id: 'smena', label: 'Smena', icon: <Clock size={20}/> },
+    { id: 'qarzdorlar', label: 'Qarzlar', icon: <Search size={20}/> },
+    { id: 'mahsulot', label: 'Menyu', icon: <UtensilsCrossed size={20}/> },
+    { id: 'xodim', label: 'Xodim', icon: <Users size={20}/> },
   ]
 
   return (
-    <div className="min-h-screen bg-[#F5F3EE]">
+    <div className="min-h-screen bg-[#F5F3EE] pb-20">
 
       {/* TOPBAR */}
-      <div className="bg-[#1C1407] px-6 py-3 flex items-center justify-between sticky top-0 z-40">
+      <div className="bg-[#1C1407] px-4 py-3 flex items-center justify-between sticky top-0 z-40">
         <div>
-          <div className="text-[#F5C842] font-black tracking-widest text-base">EA MURUNTOV</div>
-          <div className="text-gray-500 text-xs mt-0.5">{user?.name} · Rahbar</div>
+          <div className="text-[#F5C842] font-black tracking-widest text-sm">EA MURUNTOV</div>
+          <div className="text-gray-500 text-xs">{user?.name} · Rahbar</div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <div className={`px-3 py-1 rounded-full text-xs font-bold ${shift?.is_open ? 'bg-green-900/40 text-green-400' : 'bg-gray-800 text-gray-500'}`}>
-            {shift?.is_open ? '● Smena ochiq' : '○ Smena yopiq'}
+            {shift?.is_open ? '● Ochiq' : '○ Yopiq'}
           </div>
           <button onClick={() => { localStorage.removeItem('pos_user'); router.push('/') }}
-            className="border border-gray-600 text-gray-400 rounded-lg px-3 py-1.5 text-xs flex items-center gap-1.5">
-            <LogOut size={14}/> Chiqish
+            className="border border-gray-600 text-gray-400 rounded-lg p-2">
+            <LogOut size={14}/>
           </button>
         </div>
       </div>
 
-      {/* TABLAR */}
-      <div className="bg-white border-b border-gray-200 px-4 flex gap-1 sticky top-[52px] z-30">
-        {tabs.map(t => (
-          <button key={t.id} onClick={() => setActiveTab(t.id)}
-            className={`flex items-center gap-1.5 px-5 py-3 text-sm font-bold border-b-2 transition-all ${activeTab === t.id ? 'border-[#C8860A] text-[#C8860A]' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
-            {t.icon} {t.label}
-          </button>
-        ))}
-      </div>
+      <div className="px-4 pt-4 pb-2 max-w-2xl mx-auto">
 
-      <div className="max-w-3xl mx-auto p-4">
-
-        {/* ===== HISOBOT TAB ===== */}
+        {/* ===== HISOBOT ===== */}
         {activeTab === 'hisobot' && (
-          <div className="space-y-4">
+          <div className="space-y-3">
 
-            {/* Smena ma'lumoti */}
+            {/* Smena info */}
             {shift && (
               <div className="bg-white rounded-2xl border border-gray-200 p-4">
-                <div className="font-black text-base mb-3">📋 Smena ma'lumoti</div>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div className="text-gray-400">Holat:</div>
-                  <div className={`font-bold ${shift.is_open ? 'text-green-600' : 'text-gray-500'}`}>
+                <div className="font-black text-sm mb-2">📋 Smena</div>
+                <div className="grid grid-cols-2 gap-y-1 text-sm">
+                  <span className="text-gray-400">Holat:</span>
+                  <span className={`font-bold ${shift.is_open ? 'text-green-600' : 'text-gray-500'}`}>
                     {shift.is_open ? '● Ochiq' : '○ Yopiq'}
-                  </div>
-                  <div className="text-gray-400">Ochdi:</div>
-                  <div className="font-bold">{shift.opened_by ? workerName(shift.opened_by) : '—'}</div>
-                  <div className="text-gray-400">Ochildi:</div>
-                  <div className="font-bold">{new Date(shift.opened_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}</div>
+                  </span>
+                  <span className="text-gray-400">Kim ochdi:</span>
+                  <span className="font-bold">{shift.opened_by ? workerName(shift.opened_by) : '—'}</span>
+                  <span className="text-gray-400">Soat:</span>
+                  <span className="font-bold">{new Date(shift.opened_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}</span>
                   {shift.closed_at && <>
-                    <div className="text-gray-400">Yopdi:</div>
-                    <div className="font-bold">{shift.closed_by ? workerName(shift.closed_by) : '—'}</div>
-                    <div className="text-gray-400">Yopildi:</div>
-                    <div className="font-bold">{new Date(shift.closed_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}</div>
+                    <span className="text-gray-400">Kim yopdi:</span>
+                    <span className="font-bold">{shift.closed_by ? workerName(shift.closed_by) : '—'}</span>
+                    <span className="text-gray-400">Yopildi:</span>
+                    <span className="font-bold">{new Date(shift.closed_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}</span>
                   </>}
                 </div>
               </div>
             )}
 
-            {/* Moliyaviy statistika */}
+            {/* Statistika kartalar */}
             <div className="grid grid-cols-2 gap-3">
               {[
-                { label: 'Jami tushum', val: fmt(totalRev) + ' so\'m', color: 'text-[#C8860A]' },
+                { label: 'Jami tushum', val: fmt(actualRev) + ' so\'m', color: 'text-[#C8860A]', sub: totalRev !== actualRev ? `Narx: ${fmt(totalRev)}` : undefined },
                 { label: 'Buyurtmalar', val: shiftOrders.length + ' ta', color: 'text-[#1A1208]' },
                 { label: 'Naqd', val: fmt(cashRev) + ' so\'m', color: 'text-[#1E7B47]' },
                 { label: 'Click', val: fmt(clickRev) + ' so\'m', color: 'text-purple-600' },
                 { label: 'Karta', val: fmt(cardRev) + ' so\'m', color: 'text-blue-600' },
                 { label: 'Qarz', val: fmt(debtRev) + ' so\'m', color: 'text-[#B83232]' },
-                { label: 'Ichki iste\'mol', val: ichkiOrders.length + ' ta', color: 'text-orange-500' },
+                { label: 'Ichki', val: ichkiOrders.length + ' ta', color: 'text-orange-500' },
                 { label: 'Faol qarzlar', val: activeDebts.length + ' ta', color: 'text-[#B83232]' },
               ].map((s, i) => (
                 <div key={i} className="bg-white rounded-2xl border border-gray-200 p-4">
                   <div className="text-xs text-gray-400 font-bold mb-1">{s.label}</div>
                   <div className={`font-black text-lg ${s.color}`}>{s.val}</div>
+                  {s.sub && <div className="text-xs text-gray-400 mt-0.5">{s.sub}</div>}
                 </div>
               ))}
             </div>
 
+            {/* Moslashuvchan to'lovlar */}
+            {moslashuvOrders.length > 0 && (
+              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-100 font-black text-sm">💱 Moslashuvchan to'lovlar</div>
+                {moslashuvOrders.map(o => (
+                  <div key={o.id} className="px-4 py-3 border-b border-gray-50 last:border-0">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">Narx: {fmt(o.total)} so'm</span>
+                      <span className="font-bold text-[#C8860A]">To'landi: {fmt(o.actual_paid || o.total)} so'm</span>
+                    </div>
+                    {o.payment_note && <div className="text-xs text-gray-400 mt-0.5">{o.payment_note}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Mahsulot hisobi */}
             {soldByProduct.length > 0 && (
               <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <div className="px-5 py-3 border-b border-gray-100 font-black text-base">📦 Mahsulot hisobi</div>
+                <div className="px-4 py-3 border-b border-gray-100 font-black text-sm">📦 Mahsulot hisobi</div>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                  <table className="w-full text-xs">
                     <thead>
                       <tr className="bg-gray-50">
-                        <th className="text-left px-4 py-2 font-bold text-gray-400 text-xs">Mahsulot</th>
-                        <th className="text-center px-2 py-2 font-bold text-gray-400 text-xs">Boshl.</th>
-                        <th className="text-center px-2 py-2 font-bold text-gray-400 text-xs">Kirim</th>
-                        <th className="text-center px-2 py-2 font-bold text-gray-400 text-xs">Sotildi</th>
-                        <th className="text-center px-2 py-2 font-bold text-gray-400 text-xs">Chiqim</th>
-                        <th className="text-center px-2 py-2 font-bold text-gray-400 text-xs">Qoldiq</th>
+                        <th className="text-left px-3 py-2 font-bold text-gray-400">Mahsulot</th>
+                        <th className="text-center px-1 py-2 font-bold text-gray-400">B.</th>
+                        <th className="text-center px-1 py-2 font-bold text-gray-400">K.</th>
+                        <th className="text-center px-1 py-2 font-bold text-gray-400">S.</th>
+                        <th className="text-center px-1 py-2 font-bold text-gray-400">Ch.</th>
+                        <th className="text-center px-1 py-2 font-bold text-gray-400">Q.</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
                       {soldByProduct.map(p => (
                         <tr key={p.id}>
-                          <td className="px-4 py-2 font-bold text-sm">{p.name}</td>
-                          <td className="px-2 py-2 text-center text-gray-500">{p.initial}</td>
-                          <td className="px-2 py-2 text-center text-green-600 font-bold">{p.stockIn > 0 ? `+${p.stockIn}` : '—'}</td>
-                          <td className="px-2 py-2 text-center text-[#C8860A] font-bold">{p.sold > 0 ? p.sold : '—'}</td>
-                          <td className="px-2 py-2 text-center text-red-500 font-bold">{p.writeOff > 0 ? p.writeOff : '—'}</td>
-                          <td className={`px-2 py-2 text-center font-black ${p.remaining < 0 ? 'text-red-600' : 'text-[#1A1208]'}`}>{p.remaining}</td>
+                          <td className="px-3 py-2 font-bold text-xs">{p.name}</td>
+                          <td className="px-1 py-2 text-center text-gray-500">{p.initial}</td>
+                          <td className="px-1 py-2 text-center text-green-600 font-bold">{p.stockIn > 0 ? `+${p.stockIn}` : '—'}</td>
+                          <td className="px-1 py-2 text-center text-[#C8860A] font-bold">{p.sold > 0 ? p.sold : '—'}</td>
+                          <td className="px-1 py-2 text-center text-red-500 font-bold">{p.writeOff > 0 ? p.writeOff : '—'}</td>
+                          <td className={`px-1 py-2 text-center font-black ${p.remaining < 0 ? 'text-red-600' : 'text-[#1A1208]'}`}>{p.remaining}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -391,265 +354,301 @@ export default function AdminPage() {
                 </div>
               </div>
             )}
-            {/* OSH HISOBI */}
-{oshHissa > 0 && (
-  <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-    <div className="px-5 py-3 border-b border-gray-100 font-black text-base">🍚 Osh qoldig'i</div>
-    <div className="grid grid-cols-3 gap-4 p-5">
-      <div className="text-center">
-        <div className="text-2xl font-black text-[#C8860A]">{oshHissa}</div>
-        <div className="text-xs text-gray-400 mt-1 font-bold">Jami hissa</div>
-      </div>
-      <div className="text-center border-x border-gray-100">
-        <div className="text-2xl font-black text-green-600">{Math.floor(oshHissa / 3)}</div>
-        <div className="text-xs text-gray-400 mt-1 font-bold">Butun porsiya</div>
-      </div>
-      <div className="text-center">
-        <div className="text-2xl font-black text-blue-600">{Math.floor(oshHissa / 2)}</div>
-        <div className="text-xs text-gray-400 mt-1 font-bold">Yarim porsiya</div>
-      </div>
-    </div>
-  </div>
-)}
+
+            {/* Osh hisobi */}
+            {oshHissa > 0 && (
+              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-100 font-black text-sm">🍚 Osh qoldig'i</div>
+                <div className="grid grid-cols-3 gap-2 p-4">
+                  <div className="text-center">
+                    <div className="text-xl font-black text-[#C8860A]">{oshHissa}</div>
+                    <div className="text-xs text-gray-400 mt-0.5">Hissa</div>
+                  </div>
+                  <div className="text-center border-x border-gray-100">
+                    <div className="text-xl font-black text-green-600">{Math.floor(oshHissa / 3)}</div>
+                    <div className="text-xs text-gray-400 mt-0.5">Butun</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xl font-black text-blue-600">{Math.floor(oshHissa / 2)}</div>
+                    <div className="text-xs text-gray-400 mt-0.5">Yarim</div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Ichki iste'mol */}
             {ichkiOrders.length > 0 && (
               <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <div className="px-5 py-3 border-b border-gray-100 font-black text-base text-orange-500">🍽 Ichki iste'mol</div>
-                <div className="divide-y divide-gray-50">
-                  {ichkiOrders.map(o => {
-                    const items = orderItems.filter(oi => oi.order_id === o.id)
-                    return (
-                      <div key={o.id} className="px-5 py-3">
-                        <div className="flex justify-between items-center">
-                          <div className="font-bold text-sm">{workerName(o.worker_id)}</div>
-                          <div className="text-xs text-gray-400">{new Date(o.created_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}</div>
-                        </div>
-                        <div className="text-xs text-gray-500 mt-1">
-                          {items.map(i => `${productName(i.product_id)} × ${i.qty}`).join(', ')}
-                        </div>
+                <div className="px-4 py-3 border-b border-gray-100 font-black text-sm text-orange-500">🍽 Ichki iste'mol</div>
+                {ichkiOrders.map(o => {
+                  const items = orderItems.filter(oi => oi.order_id === o.id)
+                  return (
+                    <div key={o.id} className="px-4 py-3 border-b border-gray-50 last:border-0">
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="font-bold">{workerName(o.worker_id)}</span>
+                        <span className="text-gray-400">{new Date(o.created_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
-                    )
-                  })}
-                </div>
+                      <div className="text-xs text-gray-500">
+                        {items.map(i => `${productName(i.product_id)} × ${i.qty}`).join(', ')}
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             )}
 
             {/* Chiqimlar */}
             {writeOffs.length > 0 && (
               <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <div className="px-5 py-3 border-b border-gray-100 font-black text-base text-[#B83232] flex items-center gap-2">
-                  <PackageMinus size={16}/> Chiqimlar
+                <div className="px-4 py-3 border-b border-gray-100 font-black text-sm text-[#B83232] flex items-center gap-2">
+                  <PackageMinus size={14}/> Chiqimlar
                 </div>
-                <div className="divide-y divide-gray-50">
-                  {writeOffs.map(w => (
-                    <div key={w.id} className="px-5 py-3">
-                      <div className="flex justify-between items-center">
-                        <div className="font-bold text-sm">{productName(w.product_id)} — {w.qty} ta</div>
-                        <div className="text-xs text-gray-400">{workerName(w.worker_id)}</div>
-                      </div>
-                      <div className="text-xs text-gray-500 mt-0.5 italic">"{w.reason}"</div>
+                {writeOffs.map(w => (
+                  <div key={w.id} className="px-4 py-3 border-b border-gray-50 last:border-0">
+                    <div className="flex justify-between text-xs mb-0.5">
+                      <span className="font-bold">{productName(w.product_id)} — {w.qty} ta</span>
+                      <span className="text-gray-400">{workerName(w.worker_id)}</span>
                     </div>
-                  ))}
-                </div>
+                    <div className="text-xs text-gray-500 italic">"{w.reason}"</div>
+                  </div>
+                ))}
               </div>
             )}
 
             {/* Kirimlar */}
             {stockIns.length > 0 && (
               <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <div className="px-5 py-3 border-b border-gray-100 font-black text-base text-[#1E7B47] flex items-center gap-2">
-                  <PackagePlus size={16}/> Kirimlar
+                <div className="px-4 py-3 border-b border-gray-100 font-black text-sm text-[#1E7B47] flex items-center gap-2">
+                  <PackagePlus size={14}/> Kirimlar
                 </div>
-                <div className="divide-y divide-gray-50">
-                  {stockIns.map(si => (
-                    <div key={si.id} className="flex items-center gap-3 px-5 py-3">
-                      <div className="flex-1">
-                        <div className="font-bold text-sm">{productName(si.product_id)} — {si.qty} ta</div>
-                        <div className="text-xs text-gray-400">{workerName(si.worker_id)}</div>
-                      </div>
-                      <div className="text-xs text-gray-400">
-                        {new Date(si.created_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}
-                      </div>
+                {stockIns.map(si => (
+                  <div key={si.id} className="flex items-center px-4 py-3 border-b border-gray-50 last:border-0">
+                    <div className="flex-1 text-xs">
+                      <div className="font-bold">{productName(si.product_id)} — {si.qty} ta</div>
+                      <div className="text-gray-400">{workerName(si.worker_id)}</div>
                     </div>
-                  ))}
-                </div>
+                    <div className="text-xs text-gray-400">
+                      {new Date(si.created_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
 
             {/* Qarzdorlar */}
             {activeDebts.length > 0 && (
               <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <div className="px-5 py-3 border-b border-gray-100 font-black text-base text-[#B83232]">Qarzdorlar</div>
-                <div className="divide-y divide-gray-50">
-                  {activeDebts.map(o => (
-                    <div key={o.id} className="flex items-center gap-3 px-5 py-3">
-                      <div className="flex-1">
-                        <div className="font-bold text-sm">{o.debtor_name || "Noma'lum"}</div>
-                        <div className="text-xs text-gray-400">{fmt(o.total)} so'm</div>
-                      </div>
-                      <button onClick={() => payDebt(o.id)}
-                        className="px-4 py-2 bg-[#1E7B47] text-white rounded-xl text-xs font-black">
-                        To'landi
-                      </button>
+                <div className="px-4 py-3 border-b border-gray-100 font-black text-sm text-[#B83232]">Faol qarzlar</div>
+                {activeDebts.map(o => (
+                  <div key={o.id} className="flex items-center gap-3 px-4 py-3 border-b border-gray-50 last:border-0">
+                    <div className="flex-1 text-sm">
+                      <div className="font-bold">{o.debtor_name || "Noma'lum"}</div>
+                      <div className="text-xs text-gray-400">{fmt(o.total)} so'm</div>
                     </div>
-                  ))}
-                </div>
+                    <button onClick={() => payDebt(o.id)}
+                      className="px-3 py-1.5 bg-[#1E7B47] text-white rounded-xl text-xs font-black">
+                      To'landi
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
 
             {/* PDF */}
             <button onClick={generatePDF}
-              className="w-full py-4 bg-[#1A1208] text-[#F5C842] rounded-2xl font-black text-base hover:bg-[#2C200A] transition-all">
+              className="w-full py-4 bg-[#1A1208] text-[#F5C842] rounded-2xl font-black text-sm">
               📄 PDF hisobot yuklab olish
             </button>
           </div>
         )}
 
-        {/* ===== SMENA TAB ===== */}
+        {/* ===== SMENA ===== */}
         {activeTab === 'smena' && (
-          <div className="space-y-4">
-            <div className={`rounded-2xl p-5 border-2 ${shift?.is_open ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
-              <div className="font-black text-lg mb-1">{shift?.is_open ? 'Smena ochiq' : 'Smena yopiq'}</div>
-              <div className="text-sm text-gray-500">
+          <div className="space-y-3">
+            <div className={`rounded-2xl p-4 border-2 ${shift?.is_open ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
+              <div className="font-black text-base">{shift?.is_open ? 'Smena ochiq' : 'Smena yopiq'}</div>
+              <div className="text-xs text-gray-500 mt-1">
                 {shift ? `Boshlangan: ${new Date(shift.opened_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}` : 'Smena kassir tomonidan ochiladi'}
               </div>
             </div>
 
             {shift && (
               <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <div className="px-5 py-3 border-b border-gray-100">
-                  <div className="font-black text-base">Boshlang'ich miqdor</div>
-                </div>
-                <div className="divide-y divide-gray-50">
-                  {products.map(p => {
-                    const st = stocks.find(s => s.product_id === p.id)
-                    return (
-                      <div key={p.id} className="flex items-center gap-3 px-5 py-3">
-                        <div className="flex-1">
-                          <div className="font-bold text-sm">{p.name}</div>
-                          <div className="text-xs text-gray-400">{fmt(p.price)} so'm</div>
-                        </div>
-                        <button onClick={() => toggleAvail(p)}
-                          className={`px-3 py-1 rounded-full text-xs font-bold ${p.is_available ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                          {p.is_available ? 'Bor' : "Yo'q"}
-                        </button>
-                        <input type="number" min="0" value={st?.initial_qty || 0}
-                          onChange={e => updateStock(p.id, parseInt(e.target.value) || 0)}
-                          className="w-16 border border-gray-200 rounded-lg px-2 py-1.5 text-center text-sm font-bold outline-none focus:border-[#C8860A]"/>
+                <div className="px-4 py-3 border-b border-gray-100 font-black text-sm">Boshlang'ich miqdor</div>
+                {products.map(p => {
+                  const st = stocks.find(s => s.product_id === p.id)
+                  return (
+                    <div key={p.id} className="flex items-center gap-3 px-4 py-3 border-b border-gray-50 last:border-0">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-bold text-sm truncate">{p.name}</div>
+                        <div className="text-xs text-gray-400">{fmt(p.price)} so'm</div>
                       </div>
-                    )
-                  })}
-                </div>
+                      <button onClick={() => toggleAvail(p)}
+                        className={`px-3 py-1 rounded-full text-xs font-bold flex-shrink-0 ${p.is_available ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                        {p.is_available ? 'Bor' : "Yo'q"}
+                      </button>
+                      <input type="number" min="0" value={st?.initial_qty || 0}
+                        onChange={e => updateStock(p.id, parseInt(e.target.value) || 0)}
+                        className="w-14 border border-gray-200 rounded-lg px-2 py-1.5 text-center text-sm font-bold outline-none focus:border-[#C8860A] flex-shrink-0"/>
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>
         )}
 
-        {/* ===== MENYU TAB ===== */}
+        {/* ===== QARZDORLAR ===== */}
+        {activeTab === 'qarzdorlar' && (
+          <div className="space-y-3">
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-3 text-gray-400"/>
+              <input type="text" placeholder="Ism yoki telefon..."
+                value={debtorSearch} onChange={e => setDebtorSearch(e.target.value)}
+                className="w-full border border-gray-200 rounded-xl pl-9 pr-4 py-2.5 text-sm outline-none focus:border-[#C8860A] bg-white"/>
+            </div>
+            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+              {filteredDebtors.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-32 text-gray-300">
+                  <div className="text-3xl mb-2">🔍</div>
+                  <div className="text-sm font-bold">Topilmadi</div>
+                </div>
+              ) : filteredDebtors.map(d => (
+                <DebtorCard
+                  key={d.id}
+                  debtor={d}
+                  products={products}
+                  onUpdate={(id, newDebt) => {
+                    setDebtors(prev => prev.map(x => x.id === id ? { ...x, total_debt: newDebt } : x))
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ===== MENYU ===== */}
         {activeTab === 'mahsulot' && (
-          <div className="space-y-4">
-            <div className="bg-white rounded-2xl border border-gray-200 p-5">
-              <div className="font-black text-base mb-3">Kategoriya qo'shish</div>
+          <div className="space-y-3">
+            <div className="bg-white rounded-2xl border border-gray-200 p-4">
+              <div className="font-black text-sm mb-3">Kategoriya qo'shish</div>
               <div className="flex gap-2">
-                <input value={newCatName} onChange={e => setNewCatName(e.target.value)} placeholder="Kategoriya nomi"
-                  className="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
+                <input value={newCatName} onChange={e => setNewCatName(e.target.value)}
+                  placeholder="Kategoriya nomi"
+                  className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
                 <button onClick={addCategory}
-                  className="px-5 py-2.5 bg-[#C8860A] text-[#1A1208] rounded-xl font-black text-sm hover:bg-[#F5C842]">
-                  Qo'shish
+                  className="px-4 py-2.5 bg-[#C8860A] text-[#1A1208] rounded-xl font-black text-sm">
+                  +
                 </button>
               </div>
               <div className="flex flex-wrap gap-2 mt-3">
                 {categories.map(c => (
-                  <div key={c.id} className="flex items-center gap-1.5 bg-[#FFF8E7] border border-[#F5C842] rounded-full px-3 py-1">
+                  <div key={c.id} className="flex items-center gap-1 bg-[#FFF8E7] border border-[#F5C842] rounded-full px-3 py-1">
                     <span className="text-sm font-bold">{c.name}</span>
-                    <button onClick={() => deleteCategory(c.id)} className="text-gray-400 hover:text-red-500 text-xs">✕</button>
+                    <button onClick={() => deleteCategory(c.id)} className="text-gray-400 hover:text-red-500 text-xs ml-1">✕</button>
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl border border-gray-200 p-5">
-              <div className="font-black text-base mb-3">Mahsulot qo'shish</div>
+            <div className="bg-white rounded-2xl border border-gray-200 p-4">
+              <div className="font-black text-sm mb-3">Mahsulot qo'shish</div>
               <div className="space-y-2">
-                <input value={newProdName} onChange={e => setNewProdName(e.target.value)} placeholder="Mahsulot nomi"
-                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
+                <input value={newProdName} onChange={e => setNewProdName(e.target.value)}
+                  placeholder="Mahsulot nomi"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
                 <div className="flex gap-2">
-                  <input value={newProdPrice} onChange={e => setNewProdPrice(e.target.value)} placeholder="Narxi" type="number"
-                    className="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
+                  <input value={newProdPrice} onChange={e => setNewProdPrice(e.target.value)}
+                    placeholder="Narxi" type="number"
+                    className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
                   <select value={newProdCat} onChange={e => setNewProdCat(e.target.value)}
-                    className="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C8860A] bg-white">
+                    className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#C8860A] bg-white">
                     <option value="">Kategoriya</option>
                     {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
                 <button onClick={addProduct}
-                  className="w-full py-2.5 bg-[#C8860A] text-[#1A1208] rounded-xl font-black text-sm hover:bg-[#F5C842]">
-                  ＋ Mahsulot qo'shish
+                  className="w-full py-2.5 bg-[#C8860A] text-[#1A1208] rounded-xl font-black text-sm">
+                  ＋ Qo'shish
                 </button>
               </div>
             </div>
 
             <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-              <div className="px-5 py-3 border-b border-gray-100 font-black text-base">Mahsulotlar ({products.length} ta)</div>
-              <div className="divide-y divide-gray-50">
-                {products.map(p => {
-                  const cat = categories.find(c => c.id === p.category_id)
-                  return (
-                    <div key={p.id} className="flex items-center gap-3 px-5 py-3">
-                      <div className="flex-1">
-                        <div className="font-bold text-sm">{p.name}</div>
-                        <div className="text-xs text-gray-400">{cat?.name} · {fmt(p.price)} so'm</div>
-                      </div>
-                      <button onClick={() => toggleAvail(p)}
-                        className={`px-3 py-1 rounded-full text-xs font-bold ${p.is_available ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                        {p.is_available ? 'Bor' : "Yo'q"}
-                      </button>
-                      <button onClick={() => deleteProduct(p.id)} className="text-gray-300 hover:text-red-500 text-lg">✕</button>
-                    </div>
-                  )
-                })}
+              <div className="px-4 py-3 border-b border-gray-100 font-black text-sm">
+                Mahsulotlar ({products.length} ta)
               </div>
+              {products.map(p => {
+                const cat = categories.find(c => c.id === p.category_id)
+                return (
+                  <div key={p.id} className="flex items-center gap-3 px-4 py-3 border-b border-gray-50 last:border-0">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-bold text-sm truncate">{p.name}</div>
+                      <div className="text-xs text-gray-400">{cat?.name} · {fmt(p.price)} so'm</div>
+                    </div>
+                    <button onClick={() => toggleAvail(p)}
+                      className={`px-2 py-1 rounded-full text-xs font-bold flex-shrink-0 ${p.is_available ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                      {p.is_available ? 'Bor' : "Yo'q"}
+                    </button>
+                    <button onClick={() => deleteProduct(p.id)} className="text-gray-300 hover:text-red-500 flex-shrink-0">✕</button>
+                  </div>
+                )
+              })}
             </div>
           </div>
         )}
 
-        {/* ===== XODIMLAR TAB ===== */}
+        {/* ===== XODIMLAR ===== */}
         {activeTab === 'xodim' && (
-          <div className="space-y-4">
-            <div className="bg-white rounded-2xl border border-gray-200 p-5">
-              <div className="font-black text-base mb-3">Xodim qo'shish</div>
+          <div className="space-y-3">
+            <div className="bg-white rounded-2xl border border-gray-200 p-4">
+              <div className="font-black text-sm mb-3">Xodim qo'shish</div>
               <div className="space-y-2">
-                <input value={newWorkerName} onChange={e => setNewWorkerName(e.target.value)} placeholder="Xodim ismi"
-                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
-                <input value={newWorkerPin} onChange={e => setNewWorkerPin(e.target.value.slice(0, 4))} placeholder="4 xonali PIN" type="number"
-                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
+                <input value={newWorkerName} onChange={e => setNewWorkerName(e.target.value)}
+                  placeholder="Xodim ismi"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
+                <input value={newWorkerPin} onChange={e => setNewWorkerPin(e.target.value.slice(0, 4))}
+                  placeholder="4 xonali PIN" type="number"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
                 <button onClick={addWorker}
-                  className="w-full py-2.5 bg-[#C8860A] text-[#1A1208] rounded-xl font-black text-sm hover:bg-[#F5C842]">
+                  className="w-full py-2.5 bg-[#C8860A] text-[#1A1208] rounded-xl font-black text-sm">
                   ＋ Xodim qo'shish
                 </button>
               </div>
             </div>
 
             <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-              <div className="px-5 py-3 border-b border-gray-100 font-black text-base">Xodimlar ({workers.length} ta)</div>
-              <div className="divide-y divide-gray-50">
-                {workers.map(w => (
-                  <div key={w.id} className="flex items-center gap-3 px-5 py-3">
-                    <div className="w-10 h-10 rounded-full bg-[#FFF8E7] border-2 border-[#F5C842] flex items-center justify-center font-black text-[#C8860A] text-sm">
-                      {w.name[0]}
-                    </div>
-                    <div className="flex-1">
-                      <div className="font-bold text-sm">{w.name}</div>
-                      <div className="text-xs text-gray-400">PIN: {w.pin}</div>
-                    </div>
-                    <button onClick={() => deleteWorker(w.id)} className="text-gray-300 hover:text-red-500 text-lg">✕</button>
-                  </div>
-                ))}
+              <div className="px-4 py-3 border-b border-gray-100 font-black text-sm">
+                Xodimlar ({workers.length} ta)
               </div>
+              {workers.map(w => (
+                <div key={w.id} className="flex items-center gap-3 px-4 py-3 border-b border-gray-50 last:border-0">
+                  <div className="w-10 h-10 rounded-full bg-[#FFF8E7] border-2 border-[#F5C842] flex items-center justify-center font-black text-[#C8860A] text-sm flex-shrink-0">
+                    {w.name[0]}
+                  </div>
+                  <div className="flex-1">
+                    <div className="font-bold text-sm">{w.name}</div>
+                    <div className="text-xs text-gray-400">PIN: {w.pin}</div>
+                  </div>
+                  <button onClick={() => deleteWorker(w.id)} className="text-gray-300 hover:text-red-500">✕</button>
+                </div>
+              ))}
             </div>
           </div>
         )}
+      </div>
+
+      {/* BOTTOM NAV */}
+      <div className="fixed bottom-0 left-0 right-0 bg-[#1C1407] border-t border-[#3D2E10] z-40">
+        <div className="flex max-w-2xl mx-auto">
+          {tabs.map(t => (
+            <button key={t.id} onClick={() => setActiveTab(t.id)}
+              className={`flex-1 flex flex-col items-center py-2 gap-0.5 transition-all ${activeTab === t.id ? 'text-[#F5C842]' : 'text-gray-600'}`}>
+              {t.icon}
+              <span className="text-[10px] font-bold">{t.label}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {toast && (
