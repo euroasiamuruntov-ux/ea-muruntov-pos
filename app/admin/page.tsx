@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import jsPDF from 'jspdf'
-import { Clock, UtensilsCrossed, Users, BarChart3, LogOut, PackagePlus, PackageMinus, Search, ChevronDown, ChevronUp } from 'lucide-react'
+import { Clock, UtensilsCrossed, Users, BarChart3, LogOut, PackagePlus, PackageMinus, Search } from 'lucide-react'
 import DebtorCard from '../cashier/components/DebtorCard'
 
 type User = { id: string; name: string; role: string }
@@ -17,8 +17,23 @@ type Worker = { id: string; name: string; pin: string; role: string }
 type WriteOff = { id: string; product_id: string; qty: number; reason: string; worker_id: string; created_at: string }
 type StockIn = { id: string; product_id: string; qty: number; worker_id: string; created_at: string }
 type Debtor = { id: string; name: string; phone: string; total_debt: number }
+type ShiftSummary = {
+  id: string
+  opened_at: string
+  closed_at: string | null
+  is_open: boolean
+  opened_by_name: string | null
+  closed_by_name: string | null
+  order_count: number
+  total_revenue: number
+  cash_revenue: number
+  click_revenue: number
+  card_revenue: number
+  debt_revenue: number
+  ichki_count: number
+}
 
-type Tab = 'hisobot' | 'smena' | 'mahsulot' | 'xodim' | 'qarzdorlar'
+type Tab = 'hisobot' | 'smena' | 'mahsulot' | 'xodim' | 'qarzdorlar' | 'tarix'
 
 export default function AdminPage() {
   const router = useRouter()
@@ -36,6 +51,9 @@ export default function AdminPage() {
   const [stockIns, setStockIns] = useState<StockIn[]>([])
   const [debtors, setDebtors] = useState<Debtor[]>([])
   const [debtorSearch, setDebtorSearch] = useState('')
+  const [shiftHistory, setShiftHistory] = useState<ShiftSummary[]>([])
+  const [selectedShiftId, setSelectedShiftId] = useState<string | null>(null)
+  const [shiftReports, setShiftReports] = useState<{[shiftId: string]: any[]}>({})
 
   const [newCatName, setNewCatName] = useState('')
   const [newProdName, setNewProdName] = useState('')
@@ -43,7 +61,6 @@ export default function AdminPage() {
   const [newProdCat, setNewProdCat] = useState('')
   const [newWorkerName, setNewWorkerName] = useState('')
   const [newWorkerPin, setNewWorkerPin] = useState('')
-
   const [toast, setToast] = useState('')
 
   useEffect(() => {
@@ -61,7 +78,7 @@ export default function AdminPage() {
       { data: shifts }, { data: ords },
       { data: oi }, { data: wrks },
       { data: wo }, { data: si },
-      { data: dbtrs },
+      { data: dbtrs }, { data: history },
     ] = await Promise.all([
       supabase.from('categories').select('*').order('order_num'),
       supabase.from('products').select('*').order('created_at'),
@@ -72,6 +89,7 @@ export default function AdminPage() {
       supabase.from('write_offs').select('*').order('created_at', { ascending: false }),
       supabase.from('stock_ins').select('*').order('created_at', { ascending: false }),
       supabase.from('debtors').select('*').order('name'),
+      supabase.from('shift_summary').select('*').order('opened_at', { ascending: false }).limit(30),
     ])
     setCategories(cats || [])
     setProducts(prods || [])
@@ -82,6 +100,7 @@ export default function AdminPage() {
     setWriteOffs(wo || [])
     setStockIns(si || [])
     setDebtors(dbtrs || [])
+    setShiftHistory(history || [])
 
     if (shifts?.id) {
       const { data: st } = await supabase.from('shift_stock').select('*').eq('shift_id', shifts.id)
@@ -89,6 +108,15 @@ export default function AdminPage() {
       const { data: oh } = await supabase.from('osh_stock').select('*').eq('shift_id', shifts.id).maybeSingle()
       setOshHissa(oh?.total_hissa || 0)
     }
+  }
+
+  const loadShiftReport = async (shiftId: string) => {
+    if (shiftReports[shiftId]) return
+    const { data } = await supabase
+      .from('shift_reports')
+      .select('*, products(name)')
+      .eq('shift_id', shiftId)
+    setShiftReports(prev => ({ ...prev, [shiftId]: data || [] }))
   }
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 2500) }
@@ -204,8 +232,7 @@ export default function AdminPage() {
       moslashuvOrders.forEach(o => {
         if (y > 265) { doc.addPage(); y = 20 }
         doc.text(`${fmt(o.total)} → ${fmt(o.actual_paid || o.total)} so'm`, 25, y)
-        doc.text(o.payment_note || '', 90, y)
-        y += 6
+        doc.text(o.payment_note || '', 90, y); y += 6
       })
     }
 
@@ -231,7 +258,7 @@ export default function AdminPage() {
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: 'hisobot', label: 'Hisobot', icon: <BarChart3 size={20}/> },
-    { id: 'smena', label: 'Smena', icon: <Clock size={20}/> },
+    { id: 'tarix', label: 'Tarix', icon: <Clock size={20}/> },
     { id: 'qarzdorlar', label: 'Qarzlar', icon: <Search size={20}/> },
     { id: 'mahsulot', label: 'Menyu', icon: <UtensilsCrossed size={20}/> },
     { id: 'xodim', label: 'Xodim', icon: <Users size={20}/> },
@@ -263,7 +290,6 @@ export default function AdminPage() {
         {activeTab === 'hisobot' && (
           <div className="space-y-3">
 
-            {/* Smena info */}
             {shift && (
               <div className="bg-white rounded-2xl border border-gray-200 p-4">
                 <div className="font-black text-sm mb-2">📋 Smena</div>
@@ -286,7 +312,6 @@ export default function AdminPage() {
               </div>
             )}
 
-            {/* Statistika kartalar */}
             <div className="grid grid-cols-2 gap-3">
               {[
                 { label: 'Jami tushum', val: fmt(actualRev) + ' so\'m', color: 'text-[#C8860A]', sub: totalRev !== actualRev ? `Narx: ${fmt(totalRev)}` : undefined },
@@ -306,7 +331,6 @@ export default function AdminPage() {
               ))}
             </div>
 
-            {/* Moslashuvchan to'lovlar */}
             {moslashuvOrders.length > 0 && (
               <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100 font-black text-sm">💱 Moslashuvchan to'lovlar</div>
@@ -322,7 +346,6 @@ export default function AdminPage() {
               </div>
             )}
 
-            {/* Mahsulot hisobi */}
             {soldByProduct.length > 0 && (
               <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100 font-black text-sm">📦 Mahsulot hisobi</div>
@@ -355,7 +378,6 @@ export default function AdminPage() {
               </div>
             )}
 
-            {/* Osh hisobi */}
             {oshHissa > 0 && (
               <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100 font-black text-sm">🍚 Osh qoldig'i</div>
@@ -376,7 +398,6 @@ export default function AdminPage() {
               </div>
             )}
 
-            {/* Ichki iste'mol */}
             {ichkiOrders.length > 0 && (
               <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100 font-black text-sm text-orange-500">🍽 Ichki iste'mol</div>
@@ -397,7 +418,6 @@ export default function AdminPage() {
               </div>
             )}
 
-            {/* Chiqimlar */}
             {writeOffs.length > 0 && (
               <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100 font-black text-sm text-[#B83232] flex items-center gap-2">
@@ -415,7 +435,6 @@ export default function AdminPage() {
               </div>
             )}
 
-            {/* Kirimlar */}
             {stockIns.length > 0 && (
               <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100 font-black text-sm text-[#1E7B47] flex items-center gap-2">
@@ -435,7 +454,6 @@ export default function AdminPage() {
               </div>
             )}
 
-            {/* Qarzdorlar */}
             {activeDebts.length > 0 && (
               <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100 font-black text-sm text-[#B83232]">Faol qarzlar</div>
@@ -454,7 +472,6 @@ export default function AdminPage() {
               </div>
             )}
 
-            {/* PDF */}
             <button onClick={generatePDF}
               className="w-full py-4 bg-[#1A1208] text-[#F5C842] rounded-2xl font-black text-sm">
               📄 PDF hisobot yuklab olish
@@ -462,39 +479,124 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* ===== SMENA ===== */}
-        {activeTab === 'smena' && (
+        {/* ===== SMENA TARIXI ===== */}
+        {activeTab === 'tarix' && (
           <div className="space-y-3">
-            <div className={`rounded-2xl p-4 border-2 ${shift?.is_open ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
-              <div className="font-black text-base">{shift?.is_open ? 'Smena ochiq' : 'Smena yopiq'}</div>
-              <div className="text-xs text-gray-500 mt-1">
-                {shift ? `Boshlangan: ${new Date(shift.opened_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}` : 'Smena kassir tomonidan ochiladi'}
+            <div className="text-xs text-gray-400 font-bold px-1">Oxirgi 30 ta smena</div>
+            {shiftHistory.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center text-gray-300">
+                <div className="text-3xl mb-2">📋</div>
+                <div className="text-sm font-bold">Smena tarixi yo'q</div>
               </div>
-            </div>
+            ) : shiftHistory.map(s => {
+              const isSelected = selectedShiftId === s.id
+              const report = shiftReports[s.id] || []
+              const sana = new Date(s.opened_at).toLocaleDateString('uz-UZ', { day: '2-digit', month: '2-digit', year: '2-digit' })
+              const vaqt = new Date(s.opened_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })
+              const yopildi = s.closed_at
+                ? new Date(s.closed_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })
+                : null
 
-            {shift && (
-              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100 font-black text-sm">Boshlang'ich miqdor</div>
-                {products.map(p => {
-                  const st = stocks.find(s => s.product_id === p.id)
-                  return (
-                    <div key={p.id} className="flex items-center gap-3 px-4 py-3 border-b border-gray-50 last:border-0">
-                      <div className="flex-1 min-w-0">
-                        <div className="font-bold text-sm truncate">{p.name}</div>
-                        <div className="text-xs text-gray-400">{fmt(p.price)} so'm</div>
+              return (
+                <div key={s.id} className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                  <div
+                    className="px-4 py-3 cursor-pointer hover:bg-gray-50 transition-all"
+                    onClick={() => {
+                      if (isSelected) {
+                        setSelectedShiftId(null)
+                      } else {
+                        setSelectedShiftId(s.id)
+                        loadShiftReport(s.id)
+                      }
+                    }}>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${s.is_open ? 'bg-green-500' : 'bg-gray-300'}`}/>
+                        <span className="font-black text-sm">{sana}</span>
+                        <span className="text-gray-400 text-xs">{vaqt}{yopildi ? ` — ${yopildi}` : ''}</span>
                       </div>
-                      <button onClick={() => toggleAvail(p)}
-                        className={`px-3 py-1 rounded-full text-xs font-bold flex-shrink-0 ${p.is_available ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                        {p.is_available ? 'Bor' : "Yo'q"}
-                      </button>
-                      <input type="number" min="0" value={st?.initial_qty || 0}
-                        onChange={e => updateStock(p.id, parseInt(e.target.value) || 0)}
-                        className="w-14 border border-gray-200 rounded-lg px-2 py-1.5 text-center text-sm font-bold outline-none focus:border-[#C8860A] flex-shrink-0"/>
+                      <span className="text-xs text-gray-400">{isSelected ? '▲' : '▼'}</span>
                     </div>
-                  )
-                })}
-              </div>
-            )}
+                    <div className="flex items-center gap-3 ml-4">
+                      <span className="text-xs text-gray-500">{s.order_count} buyurtma</span>
+                      <span className="font-black text-sm text-[#C8860A]">{fmt(s.total_revenue)} so'm</span>
+                      {s.is_open && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold">Ochiq</span>}
+                    </div>
+                    <div className="flex gap-3 ml-4 mt-1 text-xs text-gray-400">
+                      {s.opened_by_name && <span>Kim ochdi: {s.opened_by_name}</span>}
+                      {s.closed_by_name && <span>Kim yopdi: {s.closed_by_name}</span>}
+                    </div>
+                  </div>
+
+                  {isSelected && (
+                    <div className="border-t border-gray-100 px-4 py-3 bg-gray-50 space-y-3">
+                      <div className="grid grid-cols-2 gap-2">
+                        {[
+                          { label: 'Jami tushum', val: fmt(s.total_revenue) + ' so\'m', color: 'text-[#C8860A]' },
+                          { label: 'Buyurtmalar', val: s.order_count + ' ta', color: 'text-gray-700' },
+                          { label: 'Naqd', val: fmt(s.cash_revenue) + ' so\'m', color: 'text-green-600' },
+                          { label: 'Click', val: fmt(s.click_revenue) + ' so\'m', color: 'text-purple-600' },
+                          { label: 'Karta', val: fmt(s.card_revenue) + ' so\'m', color: 'text-blue-600' },
+                          { label: 'Qarz', val: fmt(s.debt_revenue) + ' so\'m', color: 'text-red-500' },
+                          { label: 'Ichki', val: s.ichki_count + ' ta', color: 'text-orange-500' },
+                        ].map((item, i) => (
+                          <div key={i} className="bg-white rounded-xl p-2.5">
+                            <div className="text-xs text-gray-400 mb-0.5">{item.label}</div>
+                            <div className={`font-black text-sm ${item.color}`}>{item.val}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {report.length > 0 ? (
+                        <div className="bg-white rounded-xl overflow-hidden">
+                          <div className="px-3 py-2 border-b border-gray-100 font-black text-xs text-gray-500">
+                            📦 Mahsulot hisoboti
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="bg-gray-50">
+                                  <th className="text-left px-3 py-1.5 font-bold text-gray-400">Mahsulot</th>
+                                  <th className="text-center px-1 py-1.5 font-bold text-gray-400">Tizim</th>
+                                  <th className="text-center px-1 py-1.5 font-bold text-gray-400">Haqiqiy</th>
+                                  <th className="text-center px-1 py-1.5 font-bold text-gray-400">Farq</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {report.map((r: any) => (
+                                  <tr key={r.id} className="border-t border-gray-50">
+                                    <td className="px-3 py-1.5 font-bold">{r.products?.name || '—'}</td>
+                                    <td className="px-1 py-1.5 text-center text-gray-500">{r.system_qty}</td>
+                                    <td className="px-1 py-1.5 text-center font-bold">{r.actual_qty}</td>
+                                    <td className={`px-1 py-1.5 text-center font-black ${r.diff < 0 ? 'text-red-500' : r.diff > 0 ? 'text-green-600' : 'text-gray-300'}`}>
+                                      {r.diff === 0 ? '—' : (r.diff > 0 ? '+' : '') + r.diff}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          {report.filter((r: any) => r.diff !== 0 && r.note).length > 0 && (
+                            <div className="px-3 py-2 border-t border-gray-100">
+                              <div className="text-xs font-bold text-red-500 mb-1">⚠ Farqlar izohi:</div>
+                              {report.filter((r: any) => r.diff !== 0 && r.note).map((r: any) => (
+                                <div key={r.id} className="text-xs text-gray-500 mb-0.5">
+                                  <span className="font-bold">{r.products?.name}:</span> {r.note}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="bg-white rounded-xl p-3 text-center text-xs text-gray-400">
+                          Mahsulot hisoboti yo'q
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         )}
 
@@ -514,10 +616,7 @@ export default function AdminPage() {
                   <div className="text-sm font-bold">Topilmadi</div>
                 </div>
               ) : filteredDebtors.map(d => (
-                <DebtorCard
-                  key={d.id}
-                  debtor={d}
-                  products={products}
+                <DebtorCard key={d.id} debtor={d} products={products}
                   onUpdate={(id, newDebt) => {
                     setDebtors(prev => prev.map(x => x.id === id ? { ...x, total_debt: newDebt } : x))
                   }}
@@ -537,9 +636,7 @@ export default function AdminPage() {
                   placeholder="Kategoriya nomi"
                   className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
                 <button onClick={addCategory}
-                  className="px-4 py-2.5 bg-[#C8860A] text-[#1A1208] rounded-xl font-black text-sm">
-                  +
-                </button>
+                  className="px-4 py-2.5 bg-[#C8860A] text-[#1A1208] rounded-xl font-black text-sm">+</button>
               </div>
               <div className="flex flex-wrap gap-2 mt-3">
                 {categories.map(c => (
