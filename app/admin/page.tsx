@@ -8,7 +8,16 @@ import DebtorCard from '../cashier/components/DebtorCard'
 
 type User = { id: string; name: string; role: string }
 type Category = { id: string; name: string; order_num: number }
-type Product = { id: string; name: string; price: number; category_id: string; is_available: boolean }
+type Product = { 
+  id: string; 
+  name: string; 
+  price: number; 
+  category_id: string; 
+  is_available: boolean;
+  unit_type?: string;
+  kg_to_hissa?: number;
+  hissa_per_unit?: number;
+}
 type Shift = { id: string; is_open: boolean; opened_at: string; closed_at?: string; opened_by?: string; closed_by?: string }
 type ShiftStock = { product_id: string; initial_qty: number }
 type Order = { id: string; total: number; pay_type: string; debt_paid: boolean; debtor_name: string | null; worker_id: string; created_at: string; actual_paid?: number; payment_note?: string }
@@ -134,14 +143,33 @@ export default function AdminPage() {
       orderItemsData = oi || []
     }
 
-    const enriched = (report || []).map((r: any) => {
-      const initial = stockData?.find((s: any) => s.product_id === r.product_id)?.initial_qty || 0
-      const kirim = siData?.filter((si: any) => si.product_id === r.product_id).reduce((s: number, si: any) => s + si.qty, 0) || 0
-      const sotildi = orderItemsData.filter((oi: any) => oi.product_id === r.product_id).reduce((s: number, oi: any) => s + oi.qty, 0)
-      const chiqim = woData?.filter((w: any) => w.product_id === r.product_id).reduce((s: number, w: any) => s + w.qty, 0) || 0
-      const qoldiq = initial + kirim - sotildi - chiqim
-      return { ...r, initial, kirim, sotildi, chiqim, qoldiq }
-    }).filter((r: any) => r.initial > 0 || r.kirim > 0 || r.sotildi > 0 || r.chiqim > 0)
+     const enriched = (report || []).map((r: any) => {
+  const prod = products.find((p: any) => p.id === r.product_id)
+  const initial = stockData?.find((s: any) => s.product_id === r.product_id)?.initial_qty || 0
+
+  // Osh uchun kg → hissa → porsiya
+  let kirim = 0
+  if (prod?.unit_type === 'hissa') {
+    const kgKirim = siData?.filter((si: any) => si.product_id === r.product_id)
+      .reduce((s: number, si: any) => s + si.qty, 0) || 0
+    const hissaKirim = Math.round(kgKirim * (prod.kg_to_hissa || 21))
+    kirim = Math.floor(hissaKirim / (prod.hissa_per_unit || 3))
+  } else {
+    kirim = siData?.filter((si: any) => si.product_id === r.product_id)
+      .reduce((s: number, si: any) => s + si.qty, 0) || 0
+  }
+
+  const sotildi = orderItemsData
+    .filter((oi: any) => oi.product_id === r.product_id)
+    .reduce((s: number, oi: any) => s + oi.qty, 0)
+
+  const chiqim = woData?.filter((w: any) => w.product_id === r.product_id)
+    .reduce((s: number, w: any) => s + w.qty, 0) || 0
+
+  const qoldiq = initial + kirim - sotildi - chiqim
+
+  return { ...r, initial, kirim, sotildi, chiqim, qoldiq }
+}).filter((r: any) => r.initial > 0 || r.kirim > 0 || r.sotildi > 0 || r.chiqim > 0)
 
     setShiftReports(prev => ({ ...prev, [shiftId]: enriched }))
   }
