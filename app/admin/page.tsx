@@ -33,7 +33,7 @@ type ShiftSummary = {
   ichki_count: number
 }
 
-type Tab = 'hisobot' | 'smena' | 'mahsulot' | 'xodim' | 'qarzdorlar' | 'tarix'
+type Tab = 'hisobot' | 'tarix' | 'qarzdorlar' | 'mahsulot' | 'xodim'
 
 export default function AdminPage() {
   const router = useRouter()
@@ -112,11 +112,38 @@ export default function AdminPage() {
 
   const loadShiftReport = async (shiftId: string) => {
     if (shiftReports[shiftId]) return
-    const { data } = await supabase
-      .from('shift_reports')
-      .select('*, products(name)')
-      .eq('shift_id', shiftId)
-    setShiftReports(prev => ({ ...prev, [shiftId]: data || [] }))
+
+    const [
+      { data: report },
+      { data: stockData },
+      { data: siData },
+      { data: woData },
+      { data: ords },
+    ] = await Promise.all([
+      supabase.from('shift_reports').select('*, products(name)').eq('shift_id', shiftId),
+      supabase.from('shift_stock').select('*').eq('shift_id', shiftId),
+      supabase.from('stock_ins').select('*').eq('shift_id', shiftId),
+      supabase.from('write_offs').select('*').eq('shift_id', shiftId),
+      supabase.from('orders').select('id').eq('shift_id', shiftId),
+    ])
+
+    let orderItemsData: any[] = []
+    if (ords && ords.length > 0) {
+      const orderIds = ords.map((o: any) => o.id)
+      const { data: oi } = await supabase.from('order_items').select('*').in('order_id', orderIds)
+      orderItemsData = oi || []
+    }
+
+    const enriched = (report || []).map((r: any) => {
+      const initial = stockData?.find((s: any) => s.product_id === r.product_id)?.initial_qty || 0
+      const kirim = siData?.filter((si: any) => si.product_id === r.product_id).reduce((s: number, si: any) => s + si.qty, 0) || 0
+      const sotildi = orderItemsData.filter((oi: any) => oi.product_id === r.product_id).reduce((s: number, oi: any) => s + oi.qty, 0)
+      const chiqim = woData?.filter((w: any) => w.product_id === r.product_id).reduce((s: number, w: any) => s + w.qty, 0) || 0
+      const qoldiq = initial + kirim - sotildi - chiqim
+      return { ...r, initial, kirim, sotildi, chiqim, qoldiq }
+    }).filter((r: any) => r.initial > 0 || r.kirim > 0 || r.sotildi > 0 || r.chiqim > 0)
+
+    setShiftReports(prev => ({ ...prev, [shiftId]: enriched }))
   }
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 2500) }
@@ -127,12 +154,6 @@ export default function AdminPage() {
   const toggleAvail = async (p: Product) => {
     await supabase.from('products').update({ is_available: !p.is_available }).eq('id', p.id)
     setProducts(prev => prev.map(x => x.id === p.id ? { ...x, is_available: !x.is_available } : x))
-  }
-
-  const updateStock = async (productId: string, qty: number) => {
-    if (!shift) return
-    setStocks(prev => prev.map(s => s.product_id === productId ? { ...s, initial_qty: qty } : s))
-    await supabase.from('shift_stock').update({ initial_qty: qty }).eq('shift_id', shift.id).eq('product_id', productId)
   }
 
   const addCategory = async () => {
@@ -208,7 +229,6 @@ export default function AdminPage() {
     doc.setFontSize(10); doc.setFont('helvetica', 'normal')
     doc.text(`Sana: ${new Date().toLocaleDateString('ru-RU')}`, 105, y, { align: 'center' }); y += 8
     doc.setLineWidth(0.5); doc.line(20, y, 190, y); y += 8
-
     doc.setFontSize(12); doc.setFont('helvetica', 'bold')
     doc.text('Moliyaviy ko\'rsatkichlar:', 20, y); y += 8
     doc.setFontSize(10); doc.setFont('helvetica', 'normal')
@@ -223,19 +243,6 @@ export default function AdminPage() {
       ['Ichki iste\'mol:', `${ichkiOrders.length} ta`],
     ]
     stats.forEach(([l, v]) => { doc.text(l, 25, y); doc.text(v, 140, y); y += 7 })
-
-    if (moslashuvOrders.length > 0) {
-      y += 4; doc.line(20, y, 190, y); y += 8
-      doc.setFontSize(11); doc.setFont('helvetica', 'bold')
-      doc.text('Moslashuvchan to\'lovlar:', 20, y); y += 7
-      doc.setFontSize(9); doc.setFont('helvetica', 'normal')
-      moslashuvOrders.forEach(o => {
-        if (y > 265) { doc.addPage(); y = 20 }
-        doc.text(`${fmt(o.total)} → ${fmt(o.actual_paid || o.total)} so'm`, 25, y)
-        doc.text(o.payment_note || '', 90, y); y += 6
-      })
-    }
-
     y += 4; doc.line(20, y, 190, y); y += 8
     doc.setFontSize(12); doc.setFont('helvetica', 'bold')
     doc.text('Mahsulot hisobi:', 20, y); y += 8
@@ -249,7 +256,6 @@ export default function AdminPage() {
       doc.text(String(p.sold), 132, y); doc.text(String(p.writeOff), 152, y)
       doc.text(String(p.remaining), 172, y); y += 6
     })
-
     doc.setFontSize(8); doc.setTextColor(150)
     doc.text('Zarafshon Dasturchilari | EA Muruntov POS', 105, 285, { align: 'center' })
     doc.save(`ea-muruntov-${new Date().toLocaleDateString('ru-RU').replace(/\./g, '-')}.pdf`)
@@ -265,111 +271,109 @@ export default function AdminPage() {
   ]
 
   return (
-    <div className="min-h-screen bg-[#F5F3EE] pb-20">
+    <div style={{minHeight:'100vh', backgroundColor:'#F5F3EE', paddingBottom:'80px'}}>
 
       {/* TOPBAR */}
-      <div className="bg-[#1C1407] px-4 py-3 flex items-center justify-between sticky top-0 z-40">
+      <div style={{backgroundColor:'#1C1407', padding:'12px 16px', display:'flex', alignItems:'center', justifyContent:'space-between', position:'sticky', top:0, zIndex:40}}>
         <div>
-          <div className="text-[#F5C842] font-black tracking-widest text-sm">EA MURUNTOV</div>
-          <div className="text-gray-500 text-xs">{user?.name} · Rahbar</div>
+          <div style={{color:'#F5C842', fontWeight:900, letterSpacing:'0.1em', fontSize:'14px'}}>EA MURUNTOV</div>
+          <div style={{color:'#6b7280', fontSize:'12px'}}>{user?.name} · Rahbar</div>
         </div>
-        <div className="flex items-center gap-2">
-          <div className={`px-3 py-1 rounded-full text-xs font-bold ${shift?.is_open ? 'bg-green-900/40 text-green-400' : 'bg-gray-800 text-gray-500'}`}>
+        <div style={{display:'flex', alignItems:'center', gap:'8px'}}>
+          <div style={{padding:'4px 12px', borderRadius:'999px', fontSize:'12px', fontWeight:700, backgroundColor: shift?.is_open ? 'rgba(34,197,94,0.2)' : 'rgba(75,85,99,0.3)', color: shift?.is_open ? '#4ade80' : '#6b7280'}}>
             {shift?.is_open ? '● Ochiq' : '○ Yopiq'}
           </div>
           <button onClick={() => { localStorage.removeItem('pos_user'); router.push('/') }}
-            className="border border-gray-600 text-gray-400 rounded-lg p-2">
+            style={{border:'1px solid #4b5563', color:'#9ca3af', borderRadius:'8px', padding:'8px', background:'transparent', cursor:'pointer'}}>
             <LogOut size={14}/>
           </button>
         </div>
       </div>
 
-      <div className="px-4 pt-4 pb-2 max-w-2xl mx-auto">
+      <div style={{padding:'16px', maxWidth:'672px', margin:'0 auto'}}>
 
         {/* ===== HISOBOT ===== */}
         {activeTab === 'hisobot' && (
-          <div className="space-y-3">
+          <div style={{display:'flex', flexDirection:'column', gap:'12px'}}>
 
             {shift && (
-              <div className="bg-white rounded-2xl border border-gray-200 p-4">
-                <div className="font-black text-sm mb-2">📋 Smena</div>
-                <div className="grid grid-cols-2 gap-y-1 text-sm">
-                  <span className="text-gray-400">Holat:</span>
-                  <span className={`font-bold ${shift.is_open ? 'text-green-600' : 'text-gray-500'}`}>
-                    {shift.is_open ? '● Ochiq' : '○ Yopiq'}
-                  </span>
-                  <span className="text-gray-400">Kim ochdi:</span>
-                  <span className="font-bold">{shift.opened_by ? workerName(shift.opened_by) : '—'}</span>
-                  <span className="text-gray-400">Soat:</span>
-                  <span className="font-bold">{new Date(shift.opened_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}</span>
+              <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', padding:'16px'}}>
+                <div style={{fontWeight:900, fontSize:'14px', marginBottom:'8px'}}>📋 Smena</div>
+                <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'4px', fontSize:'14px'}}>
+                  <span style={{color:'#9ca3af'}}>Holat:</span>
+                  <span style={{fontWeight:700, color: shift.is_open ? '#16a34a' : '#6b7280'}}>{shift.is_open ? '● Ochiq' : '○ Yopiq'}</span>
+                  <span style={{color:'#9ca3af'}}>Kim ochdi:</span>
+                  <span style={{fontWeight:700}}>{shift.opened_by ? workerName(shift.opened_by) : '—'}</span>
+                  <span style={{color:'#9ca3af'}}>Soat:</span>
+                  <span style={{fontWeight:700}}>{new Date(shift.opened_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}</span>
                   {shift.closed_at && <>
-                    <span className="text-gray-400">Kim yopdi:</span>
-                    <span className="font-bold">{shift.closed_by ? workerName(shift.closed_by) : '—'}</span>
-                    <span className="text-gray-400">Yopildi:</span>
-                    <span className="font-bold">{new Date(shift.closed_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}</span>
+                    <span style={{color:'#9ca3af'}}>Kim yopdi:</span>
+                    <span style={{fontWeight:700}}>{shift.closed_by ? workerName(shift.closed_by) : '—'}</span>
+                    <span style={{color:'#9ca3af'}}>Yopildi:</span>
+                    <span style={{fontWeight:700}}>{new Date(shift.closed_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}</span>
                   </>}
                 </div>
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3">
+            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px'}}>
               {[
-                { label: 'Jami tushum', val: fmt(actualRev) + ' so\'m', color: 'text-[#C8860A]', sub: totalRev !== actualRev ? `Narx: ${fmt(totalRev)}` : undefined },
-                { label: 'Buyurtmalar', val: shiftOrders.length + ' ta', color: 'text-[#1A1208]' },
-                { label: 'Naqd', val: fmt(cashRev) + ' so\'m', color: 'text-[#1E7B47]' },
-                { label: 'Click', val: fmt(clickRev) + ' so\'m', color: 'text-purple-600' },
-                { label: 'Karta', val: fmt(cardRev) + ' so\'m', color: 'text-blue-600' },
-                { label: 'Qarz', val: fmt(debtRev) + ' so\'m', color: 'text-[#B83232]' },
-                { label: 'Ichki', val: ichkiOrders.length + ' ta', color: 'text-orange-500' },
-                { label: 'Faol qarzlar', val: activeDebts.length + ' ta', color: 'text-[#B83232]' },
+                { label: 'Jami tushum', val: fmt(actualRev) + ' so\'m', color: '#C8860A', sub: totalRev !== actualRev ? `Narx: ${fmt(totalRev)}` : undefined },
+                { label: 'Buyurtmalar', val: shiftOrders.length + ' ta', color: '#1A1208' },
+                { label: 'Naqd', val: fmt(cashRev) + ' so\'m', color: '#1E7B47' },
+                { label: 'Click', val: fmt(clickRev) + ' so\'m', color: '#9333ea' },
+                { label: 'Karta', val: fmt(cardRev) + ' so\'m', color: '#2563eb' },
+                { label: 'Qarz', val: fmt(debtRev) + ' so\'m', color: '#B83232' },
+                { label: 'Ichki', val: ichkiOrders.length + ' ta', color: '#f97316' },
+                { label: 'Faol qarzlar', val: activeDebts.length + ' ta', color: '#B83232' },
               ].map((s, i) => (
-                <div key={i} className="bg-white rounded-2xl border border-gray-200 p-4">
-                  <div className="text-xs text-gray-400 font-bold mb-1">{s.label}</div>
-                  <div className={`font-black text-lg ${s.color}`}>{s.val}</div>
-                  {s.sub && <div className="text-xs text-gray-400 mt-0.5">{s.sub}</div>}
+                <div key={i} style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', padding:'16px'}}>
+                  <div style={{fontSize:'12px', color:'#9ca3af', fontWeight:700, marginBottom:'4px'}}>{s.label}</div>
+                  <div style={{fontWeight:900, fontSize:'18px', color:s.color}}>{s.val}</div>
+                  {s.sub && <div style={{fontSize:'11px', color:'#9ca3af', marginTop:'2px'}}>{s.sub}</div>}
                 </div>
               ))}
             </div>
 
             {moslashuvOrders.length > 0 && (
-              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100 font-black text-sm">💱 Moslashuvchan to'lovlar</div>
+              <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
+                <div style={{padding:'12px 16px', borderBottom:'1px solid #f3f4f6', fontWeight:900, fontSize:'14px'}}>💱 Moslashuvchan to'lovlar</div>
                 {moslashuvOrders.map(o => (
-                  <div key={o.id} className="px-4 py-3 border-b border-gray-50 last:border-0">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">Narx: {fmt(o.total)} so'm</span>
-                      <span className="font-bold text-[#C8860A]">To'landi: {fmt(o.actual_paid || o.total)} so'm</span>
+                  <div key={o.id} style={{padding:'12px 16px', borderBottom:'1px solid #f9fafb'}}>
+                    <div style={{display:'flex', justifyContent:'space-between', fontSize:'14px'}}>
+                      <span style={{color:'#6b7280'}}>Narx: {fmt(o.total)} so'm</span>
+                      <span style={{fontWeight:700, color:'#C8860A'}}>To'landi: {fmt(o.actual_paid || o.total)} so'm</span>
                     </div>
-                    {o.payment_note && <div className="text-xs text-gray-400 mt-0.5">{o.payment_note}</div>}
+                    {o.payment_note && <div style={{fontSize:'11px', color:'#9ca3af', marginTop:'2px'}}>{o.payment_note}</div>}
                   </div>
                 ))}
               </div>
             )}
 
             {soldByProduct.length > 0 && (
-              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100 font-black text-sm">📦 Mahsulot hisobi</div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
+              <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
+                <div style={{padding:'12px 16px', borderBottom:'1px solid #f3f4f6', fontWeight:900, fontSize:'14px'}}>📦 Mahsulot hisobi</div>
+                <div style={{overflowX:'auto'}}>
+                  <table style={{width:'100%', fontSize:'12px', borderCollapse:'collapse'}}>
                     <thead>
-                      <tr className="bg-gray-50">
-                        <th className="text-left px-3 py-2 font-bold text-gray-400">Mahsulot</th>
-                        <th className="text-center px-1 py-2 font-bold text-gray-400">B.</th>
-                        <th className="text-center px-1 py-2 font-bold text-gray-400">K.</th>
-                        <th className="text-center px-1 py-2 font-bold text-gray-400">S.</th>
-                        <th className="text-center px-1 py-2 font-bold text-gray-400">Ch.</th>
-                        <th className="text-center px-1 py-2 font-bold text-gray-400">Q.</th>
+                      <tr style={{backgroundColor:'#f9fafb'}}>
+                        <th style={{textAlign:'left', padding:'8px 12px', fontWeight:700, color:'#9ca3af'}}>Mahsulot</th>
+                        <th style={{textAlign:'center', padding:'8px 4px', fontWeight:700, color:'#9ca3af'}}>B.</th>
+                        <th style={{textAlign:'center', padding:'8px 4px', fontWeight:700, color:'#9ca3af'}}>K.</th>
+                        <th style={{textAlign:'center', padding:'8px 4px', fontWeight:700, color:'#9ca3af'}}>S.</th>
+                        <th style={{textAlign:'center', padding:'8px 4px', fontWeight:700, color:'#9ca3af'}}>Ch.</th>
+                        <th style={{textAlign:'center', padding:'8px 4px', fontWeight:700, color:'#9ca3af'}}>Q.</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-50">
+                    <tbody>
                       {soldByProduct.map(p => (
-                        <tr key={p.id}>
-                          <td className="px-3 py-2 font-bold text-xs">{p.name}</td>
-                          <td className="px-1 py-2 text-center text-gray-500">{p.initial}</td>
-                          <td className="px-1 py-2 text-center text-green-600 font-bold">{p.stockIn > 0 ? `+${p.stockIn}` : '—'}</td>
-                          <td className="px-1 py-2 text-center text-[#C8860A] font-bold">{p.sold > 0 ? p.sold : '—'}</td>
-                          <td className="px-1 py-2 text-center text-red-500 font-bold">{p.writeOff > 0 ? p.writeOff : '—'}</td>
-                          <td className={`px-1 py-2 text-center font-black ${p.remaining < 0 ? 'text-red-600' : 'text-[#1A1208]'}`}>{p.remaining}</td>
+                        <tr key={p.id} style={{borderTop:'1px solid #f9fafb'}}>
+                          <td style={{padding:'8px 12px', fontWeight:700}}>{p.name}</td>
+                          <td style={{padding:'8px 4px', textAlign:'center', color:'#6b7280'}}>{p.initial}</td>
+                          <td style={{padding:'8px 4px', textAlign:'center', color:'#16a34a', fontWeight:700}}>{p.stockIn > 0 ? `+${p.stockIn}` : '—'}</td>
+                          <td style={{padding:'8px 4px', textAlign:'center', color:'#C8860A', fontWeight:700}}>{p.sold > 0 ? p.sold : '—'}</td>
+                          <td style={{padding:'8px 4px', textAlign:'center', color:'#ef4444', fontWeight:700}}>{p.writeOff > 0 ? p.writeOff : '—'}</td>
+                          <td style={{padding:'8px 4px', textAlign:'center', fontWeight:900, color: p.remaining < 0 ? '#dc2626' : '#1A1208'}}>{p.remaining}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -379,39 +383,37 @@ export default function AdminPage() {
             )}
 
             {oshHissa > 0 && (
-              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100 font-black text-sm">🍚 Osh qoldig'i</div>
-                <div className="grid grid-cols-3 gap-2 p-4">
-                  <div className="text-center">
-                    <div className="text-xl font-black text-[#C8860A]">{oshHissa}</div>
-                    <div className="text-xs text-gray-400 mt-0.5">Hissa</div>
+              <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
+                <div style={{padding:'12px 16px', borderBottom:'1px solid #f3f4f6', fontWeight:900, fontSize:'14px'}}>🍚 Osh qoldig'i</div>
+                <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'8px', padding:'16px'}}>
+                  <div style={{textAlign:'center'}}>
+                    <div style={{fontSize:'20px', fontWeight:900, color:'#C8860A'}}>{oshHissa}</div>
+                    <div style={{fontSize:'11px', color:'#9ca3af', marginTop:'2px'}}>Hissa</div>
                   </div>
-                  <div className="text-center border-x border-gray-100">
-                    <div className="text-xl font-black text-green-600">{Math.floor(oshHissa / 3)}</div>
-                    <div className="text-xs text-gray-400 mt-0.5">Butun</div>
+                  <div style={{textAlign:'center', borderLeft:'1px solid #f3f4f6', borderRight:'1px solid #f3f4f6'}}>
+                    <div style={{fontSize:'20px', fontWeight:900, color:'#16a34a'}}>{Math.floor(oshHissa / 3)}</div>
+                    <div style={{fontSize:'11px', color:'#9ca3af', marginTop:'2px'}}>Butun</div>
                   </div>
-                  <div className="text-center">
-                    <div className="text-xl font-black text-blue-600">{Math.floor(oshHissa / 2)}</div>
-                    <div className="text-xs text-gray-400 mt-0.5">Yarim</div>
+                  <div style={{textAlign:'center'}}>
+                    <div style={{fontSize:'20px', fontWeight:900, color:'#2563eb'}}>{Math.floor(oshHissa / 2)}</div>
+                    <div style={{fontSize:'11px', color:'#9ca3af', marginTop:'2px'}}>Yarim</div>
                   </div>
                 </div>
               </div>
             )}
 
             {ichkiOrders.length > 0 && (
-              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100 font-black text-sm text-orange-500">🍽 Ichki iste'mol</div>
+              <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
+                <div style={{padding:'12px 16px', borderBottom:'1px solid #f3f4f6', fontWeight:900, fontSize:'14px', color:'#f97316'}}>🍽 Ichki iste'mol</div>
                 {ichkiOrders.map(o => {
                   const items = orderItems.filter(oi => oi.order_id === o.id)
                   return (
-                    <div key={o.id} className="px-4 py-3 border-b border-gray-50 last:border-0">
-                      <div className="flex justify-between text-xs mb-1">
-                        <span className="font-bold">{workerName(o.worker_id)}</span>
-                        <span className="text-gray-400">{new Date(o.created_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}</span>
+                    <div key={o.id} style={{padding:'12px 16px', borderBottom:'1px solid #f9fafb'}}>
+                      <div style={{display:'flex', justifyContent:'space-between', fontSize:'12px', marginBottom:'4px'}}>
+                        <span style={{fontWeight:700}}>{workerName(o.worker_id)}</span>
+                        <span style={{color:'#9ca3af'}}>{new Date(o.created_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
-                      <div className="text-xs text-gray-500">
-                        {items.map(i => `${productName(i.product_id)} × ${i.qty}`).join(', ')}
-                      </div>
+                      <div style={{fontSize:'12px', color:'#6b7280'}}>{items.map(i => `${productName(i.product_id)} × ${i.qty}`).join(', ')}</div>
                     </div>
                   )
                 })}
@@ -419,52 +421,50 @@ export default function AdminPage() {
             )}
 
             {writeOffs.length > 0 && (
-              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100 font-black text-sm text-[#B83232] flex items-center gap-2">
+              <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
+                <div style={{padding:'12px 16px', borderBottom:'1px solid #f3f4f6', fontWeight:900, fontSize:'14px', color:'#B83232', display:'flex', alignItems:'center', gap:'8px'}}>
                   <PackageMinus size={14}/> Chiqimlar
                 </div>
                 {writeOffs.map(w => (
-                  <div key={w.id} className="px-4 py-3 border-b border-gray-50 last:border-0">
-                    <div className="flex justify-between text-xs mb-0.5">
-                      <span className="font-bold">{productName(w.product_id)} — {w.qty} ta</span>
-                      <span className="text-gray-400">{workerName(w.worker_id)}</span>
+                  <div key={w.id} style={{padding:'12px 16px', borderBottom:'1px solid #f9fafb'}}>
+                    <div style={{display:'flex', justifyContent:'space-between', fontSize:'12px', marginBottom:'2px'}}>
+                      <span style={{fontWeight:700}}>{productName(w.product_id)} — {w.qty} ta</span>
+                      <span style={{color:'#9ca3af'}}>{workerName(w.worker_id)}</span>
                     </div>
-                    <div className="text-xs text-gray-500 italic">"{w.reason}"</div>
+                    <div style={{fontSize:'12px', color:'#6b7280', fontStyle:'italic'}}>"{w.reason}"</div>
                   </div>
                 ))}
               </div>
             )}
 
             {stockIns.length > 0 && (
-              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100 font-black text-sm text-[#1E7B47] flex items-center gap-2">
+              <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
+                <div style={{padding:'12px 16px', borderBottom:'1px solid #f3f4f6', fontWeight:900, fontSize:'14px', color:'#1E7B47', display:'flex', alignItems:'center', gap:'8px'}}>
                   <PackagePlus size={14}/> Kirimlar
                 </div>
                 {stockIns.map(si => (
-                  <div key={si.id} className="flex items-center px-4 py-3 border-b border-gray-50 last:border-0">
-                    <div className="flex-1 text-xs">
-                      <div className="font-bold">{productName(si.product_id)} — {si.qty} ta</div>
-                      <div className="text-gray-400">{workerName(si.worker_id)}</div>
+                  <div key={si.id} style={{display:'flex', alignItems:'center', padding:'12px 16px', borderBottom:'1px solid #f9fafb'}}>
+                    <div style={{flex:1, fontSize:'12px'}}>
+                      <div style={{fontWeight:700}}>{productName(si.product_id)} — {si.qty} ta</div>
+                      <div style={{color:'#9ca3af'}}>{workerName(si.worker_id)}</div>
                     </div>
-                    <div className="text-xs text-gray-400">
-                      {new Date(si.created_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}
-                    </div>
+                    <div style={{fontSize:'12px', color:'#9ca3af'}}>{new Date(si.created_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}</div>
                   </div>
                 ))}
               </div>
             )}
 
             {activeDebts.length > 0 && (
-              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100 font-black text-sm text-[#B83232]">Faol qarzlar</div>
+              <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
+                <div style={{padding:'12px 16px', borderBottom:'1px solid #f3f4f6', fontWeight:900, fontSize:'14px', color:'#B83232'}}>Faol qarzlar</div>
                 {activeDebts.map(o => (
-                  <div key={o.id} className="flex items-center gap-3 px-4 py-3 border-b border-gray-50 last:border-0">
-                    <div className="flex-1 text-sm">
-                      <div className="font-bold">{o.debtor_name || "Noma'lum"}</div>
-                      <div className="text-xs text-gray-400">{fmt(o.total)} so'm</div>
+                  <div key={o.id} style={{display:'flex', alignItems:'center', gap:'12px', padding:'12px 16px', borderBottom:'1px solid #f9fafb'}}>
+                    <div style={{flex:1, fontSize:'14px'}}>
+                      <div style={{fontWeight:700}}>{o.debtor_name || "Noma'lum"}</div>
+                      <div style={{fontSize:'12px', color:'#9ca3af'}}>{fmt(o.total)} so'm</div>
                     </div>
                     <button onClick={() => payDebt(o.id)}
-                      className="px-3 py-1.5 bg-[#1E7B47] text-white rounded-xl text-xs font-black">
+                      style={{padding:'6px 12px', backgroundColor:'#1E7B47', color:'white', borderRadius:'12px', fontSize:'12px', fontWeight:900, border:'none', cursor:'pointer'}}>
                       To'landi
                     </button>
                   </div>
@@ -473,7 +473,7 @@ export default function AdminPage() {
             )}
 
             <button onClick={generatePDF}
-              className="w-full py-4 bg-[#1A1208] text-[#F5C842] rounded-2xl font-black text-sm">
+              style={{width:'100%', padding:'16px', backgroundColor:'#1A1208', color:'#F5C842', borderRadius:'16px', fontWeight:900, fontSize:'14px', border:'none', cursor:'pointer'}}>
               📄 PDF hisobot yuklab olish
             </button>
           </div>
@@ -481,94 +481,91 @@ export default function AdminPage() {
 
         {/* ===== SMENA TARIXI ===== */}
         {activeTab === 'tarix' && (
-          <div className="space-y-3">
-            <div className="text-xs text-gray-400 font-bold px-1">Oxirgi 30 ta smena</div>
+          <div style={{display:'flex', flexDirection:'column', gap:'12px'}}>
+            <div style={{fontSize:'12px', color:'#9ca3af', fontWeight:700}}>Oxirgi 30 ta smena</div>
             {shiftHistory.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center text-gray-300">
-                <div className="text-3xl mb-2">📋</div>
-                <div className="text-sm font-bold">Smena tarixi yo'q</div>
+              <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', padding:'32px', textAlign:'center', color:'#d1d5db'}}>
+                <div style={{fontSize:'32px', marginBottom:'8px'}}>📋</div>
+                <div style={{fontSize:'14px', fontWeight:700}}>Smena tarixi yo'q</div>
               </div>
             ) : shiftHistory.map(s => {
               const isSelected = selectedShiftId === s.id
               const report = shiftReports[s.id] || []
               const sana = new Date(s.opened_at).toLocaleDateString('uz-UZ', { day: '2-digit', month: '2-digit', year: '2-digit' })
               const vaqt = new Date(s.opened_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })
-              const yopildi = s.closed_at
-                ? new Date(s.closed_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })
-                : null
+              const yopildi = s.closed_at ? new Date(s.closed_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' }) : null
 
               return (
-                <div key={s.id} className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                  <div
-                    className="px-4 py-3 cursor-pointer hover:bg-gray-50 transition-all"
+                <div key={s.id} style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
+                  <div style={{padding:'12px 16px', cursor:'pointer'}}
                     onClick={() => {
-                      if (isSelected) {
-                        setSelectedShiftId(null)
-                      } else {
-                        setSelectedShiftId(s.id)
-                        loadShiftReport(s.id)
-                      }
+                      if (isSelected) { setSelectedShiftId(null) }
+                      else { setSelectedShiftId(s.id); loadShiftReport(s.id) }
                     }}>
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="flex items-center gap-2">
-                        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${s.is_open ? 'bg-green-500' : 'bg-gray-300'}`}/>
-                        <span className="font-black text-sm">{sana}</span>
-                        <span className="text-gray-400 text-xs">{vaqt}{yopildi ? ` — ${yopildi}` : ''}</span>
+                    <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'4px'}}>
+                      <div style={{display:'flex', alignItems:'center', gap:'8px'}}>
+                        <div style={{width:'8px', height:'8px', borderRadius:'50%', backgroundColor: s.is_open ? '#22c55e' : '#d1d5db', flexShrink:0}}/>
+                        <span style={{fontWeight:900, fontSize:'14px'}}>{sana}</span>
+                        <span style={{color:'#9ca3af', fontSize:'12px'}}>{vaqt}{yopildi ? ` — ${yopildi}` : ''}</span>
                       </div>
-                      <span className="text-xs text-gray-400">{isSelected ? '▲' : '▼'}</span>
+                      <span style={{fontSize:'12px', color:'#9ca3af'}}>{isSelected ? '▲' : '▼'}</span>
                     </div>
-                    <div className="flex items-center gap-3 ml-4">
-                      <span className="text-xs text-gray-500">{s.order_count} buyurtma</span>
-                      <span className="font-black text-sm text-[#C8860A]">{fmt(s.total_revenue)} so'm</span>
-                      {s.is_open && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold">Ochiq</span>}
+                    <div style={{display:'flex', alignItems:'center', gap:'12px', marginLeft:'16px'}}>
+                      <span style={{fontSize:'12px', color:'#6b7280'}}>{s.order_count} buyurtma</span>
+                      <span style={{fontWeight:900, fontSize:'14px', color:'#C8860A'}}>{fmt(s.total_revenue)} so'm</span>
+                      {s.is_open && <span style={{fontSize:'11px', backgroundColor:'#dcfce7', color:'#15803d', padding:'2px 8px', borderRadius:'999px', fontWeight:700}}>Ochiq</span>}
                     </div>
-                    <div className="flex gap-3 ml-4 mt-1 text-xs text-gray-400">
+                    <div style={{display:'flex', gap:'12px', marginLeft:'16px', marginTop:'4px', fontSize:'12px', color:'#9ca3af'}}>
                       {s.opened_by_name && <span>Kim ochdi: {s.opened_by_name}</span>}
                       {s.closed_by_name && <span>Kim yopdi: {s.closed_by_name}</span>}
                     </div>
                   </div>
 
                   {isSelected && (
-                    <div className="border-t border-gray-100 px-4 py-3 bg-gray-50 space-y-3">
-                      <div className="grid grid-cols-2 gap-2">
+                    <div style={{borderTop:'1px solid #f3f4f6', padding:'12px 16px', backgroundColor:'#f9fafb', display:'flex', flexDirection:'column', gap:'12px'}}>
+                      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px'}}>
                         {[
-                          { label: 'Jami tushum', val: fmt(s.total_revenue) + ' so\'m', color: 'text-[#C8860A]' },
-                          { label: 'Buyurtmalar', val: s.order_count + ' ta', color: 'text-gray-700' },
-                          { label: 'Naqd', val: fmt(s.cash_revenue) + ' so\'m', color: 'text-green-600' },
-                          { label: 'Click', val: fmt(s.click_revenue) + ' so\'m', color: 'text-purple-600' },
-                          { label: 'Karta', val: fmt(s.card_revenue) + ' so\'m', color: 'text-blue-600' },
-                          { label: 'Qarz', val: fmt(s.debt_revenue) + ' so\'m', color: 'text-red-500' },
-                          { label: 'Ichki', val: s.ichki_count + ' ta', color: 'text-orange-500' },
+                          { label: 'Jami tushum', val: fmt(s.total_revenue) + ' so\'m', color: '#C8860A' },
+                          { label: 'Buyurtmalar', val: s.order_count + ' ta', color: '#1A1208' },
+                          { label: 'Naqd', val: fmt(s.cash_revenue) + ' so\'m', color: '#16a34a' },
+                          { label: 'Click', val: fmt(s.click_revenue) + ' so\'m', color: '#9333ea' },
+                          { label: 'Karta', val: fmt(s.card_revenue) + ' so\'m', color: '#2563eb' },
+                          { label: 'Qarz', val: fmt(s.debt_revenue) + ' so\'m', color: '#dc2626' },
+                          { label: 'Ichki', val: s.ichki_count + ' ta', color: '#f97316' },
                         ].map((item, i) => (
-                          <div key={i} className="bg-white rounded-xl p-2.5">
-                            <div className="text-xs text-gray-400 mb-0.5">{item.label}</div>
-                            <div className={`font-black text-sm ${item.color}`}>{item.val}</div>
+                          <div key={i} style={{backgroundColor:'white', borderRadius:'12px', padding:'10px'}}>
+                            <div style={{fontSize:'11px', color:'#9ca3af', marginBottom:'2px'}}>{item.label}</div>
+                            <div style={{fontWeight:900, fontSize:'14px', color:item.color}}>{item.val}</div>
                           </div>
                         ))}
                       </div>
 
                       {report.length > 0 ? (
-                        <div className="bg-white rounded-xl overflow-hidden">
-                          <div className="px-3 py-2 border-b border-gray-100 font-black text-xs text-gray-500">
-                            📦 Mahsulot hisoboti
-                          </div>
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-xs">
+                        <div style={{backgroundColor:'white', borderRadius:'12px', overflow:'hidden'}}>
+                          <div style={{padding:'8px 12px', borderBottom:'1px solid #f3f4f6', fontWeight:900, fontSize:'12px', color:'#6b7280'}}>📦 Mahsulot hisoboti</div>
+                          <div style={{overflowX:'auto'}}>
+                            <table style={{width:'100%', fontSize:'11px', borderCollapse:'collapse'}}>
                               <thead>
-                                <tr className="bg-gray-50">
-                                  <th className="text-left px-3 py-1.5 font-bold text-gray-400">Mahsulot</th>
-                                  <th className="text-center px-1 py-1.5 font-bold text-gray-400">Tizim</th>
-                                  <th className="text-center px-1 py-1.5 font-bold text-gray-400">Haqiqiy</th>
-                                  <th className="text-center px-1 py-1.5 font-bold text-gray-400">Farq</th>
+                                <tr style={{backgroundColor:'#f9fafb'}}>
+                                  <th style={{textAlign:'left', padding:'6px 12px', fontWeight:700, color:'#9ca3af'}}>Mahsulot</th>
+                                  <th style={{textAlign:'center', padding:'6px 4px', fontWeight:700, color:'#9ca3af'}}>B.</th>
+                                  <th style={{textAlign:'center', padding:'6px 4px', fontWeight:700, color:'#9ca3af'}}>K.</th>
+                                  <th style={{textAlign:'center', padding:'6px 4px', fontWeight:700, color:'#9ca3af'}}>S.</th>
+                                  <th style={{textAlign:'center', padding:'6px 4px', fontWeight:700, color:'#9ca3af'}}>Ch.</th>
+                                  <th style={{textAlign:'center', padding:'6px 4px', fontWeight:700, color:'#9ca3af'}}>Q.</th>
+                                  <th style={{textAlign:'center', padding:'6px 4px', fontWeight:700, color:'#9ca3af'}}>Farq</th>
                                 </tr>
                               </thead>
                               <tbody>
                                 {report.map((r: any) => (
-                                  <tr key={r.id} className="border-t border-gray-50">
-                                    <td className="px-3 py-1.5 font-bold">{r.products?.name || '—'}</td>
-                                    <td className="px-1 py-1.5 text-center text-gray-500">{r.system_qty}</td>
-                                    <td className="px-1 py-1.5 text-center font-bold">{r.actual_qty}</td>
-                                    <td className={`px-1 py-1.5 text-center font-black ${r.diff < 0 ? 'text-red-500' : r.diff > 0 ? 'text-green-600' : 'text-gray-300'}`}>
+                                  <tr key={r.id} style={{borderTop:'1px solid #f9fafb'}}>
+                                    <td style={{padding:'6px 12px', fontWeight:700}}>{r.products?.name || '—'}</td>
+                                    <td style={{padding:'6px 4px', textAlign:'center', color:'#6b7280'}}>{r.initial}</td>
+                                    <td style={{padding:'6px 4px', textAlign:'center', color:'#16a34a', fontWeight:700}}>{r.kirim > 0 ? `+${r.kirim}` : '—'}</td>
+                                    <td style={{padding:'6px 4px', textAlign:'center', color:'#C8860A', fontWeight:700}}>{r.sotildi > 0 ? r.sotildi : '—'}</td>
+                                    <td style={{padding:'6px 4px', textAlign:'center', color:'#ef4444', fontWeight:700}}>{r.chiqim > 0 ? r.chiqim : '—'}</td>
+                                    <td style={{padding:'6px 4px', textAlign:'center', fontWeight:900, color:'#1A1208'}}>{r.qoldiq}</td>
+                                    <td style={{padding:'6px 4px', textAlign:'center', fontWeight:900, color: r.diff < 0 ? '#ef4444' : r.diff > 0 ? '#16a34a' : '#d1d5db'}}>
                                       {r.diff === 0 ? '—' : (r.diff > 0 ? '+' : '') + r.diff}
                                     </td>
                                   </tr>
@@ -577,18 +574,18 @@ export default function AdminPage() {
                             </table>
                           </div>
                           {report.filter((r: any) => r.diff !== 0 && r.note).length > 0 && (
-                            <div className="px-3 py-2 border-t border-gray-100">
-                              <div className="text-xs font-bold text-red-500 mb-1">⚠ Farqlar izohi:</div>
+                            <div style={{padding:'8px 12px', borderTop:'1px solid #f3f4f6'}}>
+                              <div style={{fontSize:'11px', fontWeight:700, color:'#ef4444', marginBottom:'4px'}}>⚠ Farqlar izohi:</div>
                               {report.filter((r: any) => r.diff !== 0 && r.note).map((r: any) => (
-                                <div key={r.id} className="text-xs text-gray-500 mb-0.5">
-                                  <span className="font-bold">{r.products?.name}:</span> {r.note}
+                                <div key={r.id} style={{fontSize:'11px', color:'#6b7280', marginBottom:'2px'}}>
+                                  <span style={{fontWeight:700}}>{r.products?.name}:</span> {r.note}
                                 </div>
                               ))}
                             </div>
                           )}
                         </div>
                       ) : (
-                        <div className="bg-white rounded-xl p-3 text-center text-xs text-gray-400">
+                        <div style={{backgroundColor:'white', borderRadius:'12px', padding:'12px', textAlign:'center', fontSize:'12px', color:'#9ca3af'}}>
                           Mahsulot hisoboti yo'q
                         </div>
                       )}
@@ -602,18 +599,18 @@ export default function AdminPage() {
 
         {/* ===== QARZDORLAR ===== */}
         {activeTab === 'qarzdorlar' && (
-          <div className="space-y-3">
-            <div className="relative">
-              <Search size={14} className="absolute left-3 top-3 text-gray-400"/>
+          <div style={{display:'flex', flexDirection:'column', gap:'12px'}}>
+            <div style={{position:'relative'}}>
+              <Search size={14} style={{position:'absolute', left:'12px', top:'11px', color:'#9ca3af'}}/>
               <input type="text" placeholder="Ism yoki telefon..."
                 value={debtorSearch} onChange={e => setDebtorSearch(e.target.value)}
-                className="w-full border border-gray-200 rounded-xl pl-9 pr-4 py-2.5 text-sm outline-none focus:border-[#C8860A] bg-white"/>
+                style={{width:'100%', border:'1px solid #e5e7eb', borderRadius:'12px', paddingLeft:'36px', paddingRight:'16px', paddingTop:'10px', paddingBottom:'10px', fontSize:'14px', outline:'none', boxSizing:'border-box', backgroundColor:'white'}}/>
             </div>
-            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+            <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
               {filteredDebtors.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-32 text-gray-300">
-                  <div className="text-3xl mb-2">🔍</div>
-                  <div className="text-sm font-bold">Topilmadi</div>
+                <div style={{display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'128px', color:'#d1d5db'}}>
+                  <div style={{fontSize:'32px', marginBottom:'8px'}}>🔍</div>
+                  <div style={{fontSize:'14px', fontWeight:700}}>Topilmadi</div>
                 </div>
               ) : filteredDebtors.map(d => (
                 <DebtorCard key={d.id} debtor={d} products={products}
@@ -628,66 +625,61 @@ export default function AdminPage() {
 
         {/* ===== MENYU ===== */}
         {activeTab === 'mahsulot' && (
-          <div className="space-y-3">
-            <div className="bg-white rounded-2xl border border-gray-200 p-4">
-              <div className="font-black text-sm mb-3">Kategoriya qo'shish</div>
-              <div className="flex gap-2">
-                <input value={newCatName} onChange={e => setNewCatName(e.target.value)}
-                  placeholder="Kategoriya nomi"
-                  className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
+          <div style={{display:'flex', flexDirection:'column', gap:'12px'}}>
+            <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', padding:'16px'}}>
+              <div style={{fontWeight:900, fontSize:'14px', marginBottom:'12px'}}>Kategoriya qo'shish</div>
+              <div style={{display:'flex', gap:'8px'}}>
+                <input value={newCatName} onChange={e => setNewCatName(e.target.value)} placeholder="Kategoriya nomi"
+                  style={{flex:1, border:'1px solid #e5e7eb', borderRadius:'12px', padding:'10px 12px', fontSize:'14px', outline:'none'}}/>
                 <button onClick={addCategory}
-                  className="px-4 py-2.5 bg-[#C8860A] text-[#1A1208] rounded-xl font-black text-sm">+</button>
+                  style={{padding:'10px 16px', backgroundColor:'#C8860A', color:'#1A1208', borderRadius:'12px', fontWeight:900, fontSize:'14px', border:'none', cursor:'pointer'}}>+</button>
               </div>
-              <div className="flex flex-wrap gap-2 mt-3">
+              <div style={{display:'flex', flexWrap:'wrap', gap:'8px', marginTop:'12px'}}>
                 {categories.map(c => (
-                  <div key={c.id} className="flex items-center gap-1 bg-[#FFF8E7] border border-[#F5C842] rounded-full px-3 py-1">
-                    <span className="text-sm font-bold">{c.name}</span>
-                    <button onClick={() => deleteCategory(c.id)} className="text-gray-400 hover:text-red-500 text-xs ml-1">✕</button>
+                  <div key={c.id} style={{display:'flex', alignItems:'center', gap:'4px', backgroundColor:'#FFF8E7', border:'1px solid #F5C842', borderRadius:'999px', padding:'4px 12px'}}>
+                    <span style={{fontSize:'14px', fontWeight:700}}>{c.name}</span>
+                    <button onClick={() => deleteCategory(c.id)} style={{color:'#9ca3af', background:'none', border:'none', cursor:'pointer', fontSize:'12px', marginLeft:'4px'}}>✕</button>
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl border border-gray-200 p-4">
-              <div className="font-black text-sm mb-3">Mahsulot qo'shish</div>
-              <div className="space-y-2">
-                <input value={newProdName} onChange={e => setNewProdName(e.target.value)}
-                  placeholder="Mahsulot nomi"
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
-                <div className="flex gap-2">
-                  <input value={newProdPrice} onChange={e => setNewProdPrice(e.target.value)}
-                    placeholder="Narxi" type="number"
-                    className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
+            <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', padding:'16px'}}>
+              <div style={{fontWeight:900, fontSize:'14px', marginBottom:'12px'}}>Mahsulot qo'shish</div>
+              <div style={{display:'flex', flexDirection:'column', gap:'8px'}}>
+                <input value={newProdName} onChange={e => setNewProdName(e.target.value)} placeholder="Mahsulot nomi"
+                  style={{border:'1px solid #e5e7eb', borderRadius:'12px', padding:'10px 12px', fontSize:'14px', outline:'none'}}/>
+                <div style={{display:'flex', gap:'8px'}}>
+                  <input value={newProdPrice} onChange={e => setNewProdPrice(e.target.value)} placeholder="Narxi" type="number"
+                    style={{flex:1, border:'1px solid #e5e7eb', borderRadius:'12px', padding:'10px 12px', fontSize:'14px', outline:'none'}}/>
                   <select value={newProdCat} onChange={e => setNewProdCat(e.target.value)}
-                    className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#C8860A] bg-white">
+                    style={{flex:1, border:'1px solid #e5e7eb', borderRadius:'12px', padding:'10px 12px', fontSize:'14px', outline:'none', backgroundColor:'white'}}>
                     <option value="">Kategoriya</option>
                     {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
                 <button onClick={addProduct}
-                  className="w-full py-2.5 bg-[#C8860A] text-[#1A1208] rounded-xl font-black text-sm">
+                  style={{padding:'10px', backgroundColor:'#C8860A', color:'#1A1208', borderRadius:'12px', fontWeight:900, fontSize:'14px', border:'none', cursor:'pointer'}}>
                   ＋ Qo'shish
                 </button>
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-              <div className="px-4 py-3 border-b border-gray-100 font-black text-sm">
-                Mahsulotlar ({products.length} ta)
-              </div>
+            <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
+              <div style={{padding:'12px 16px', borderBottom:'1px solid #f3f4f6', fontWeight:900, fontSize:'14px'}}>Mahsulotlar ({products.length} ta)</div>
               {products.map(p => {
                 const cat = categories.find(c => c.id === p.category_id)
                 return (
-                  <div key={p.id} className="flex items-center gap-3 px-4 py-3 border-b border-gray-50 last:border-0">
-                    <div className="flex-1 min-w-0">
-                      <div className="font-bold text-sm truncate">{p.name}</div>
-                      <div className="text-xs text-gray-400">{cat?.name} · {fmt(p.price)} so'm</div>
+                  <div key={p.id} style={{display:'flex', alignItems:'center', gap:'12px', padding:'12px 16px', borderBottom:'1px solid #f9fafb'}}>
+                    <div style={{flex:1, minWidth:0}}>
+                      <div style={{fontWeight:700, fontSize:'14px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{p.name}</div>
+                      <div style={{fontSize:'12px', color:'#9ca3af'}}>{cat?.name} · {fmt(p.price)} so'm</div>
                     </div>
                     <button onClick={() => toggleAvail(p)}
-                      className={`px-2 py-1 rounded-full text-xs font-bold flex-shrink-0 ${p.is_available ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                      style={{padding:'4px 8px', borderRadius:'999px', fontSize:'12px', fontWeight:700, border:'none', cursor:'pointer', flexShrink:0, backgroundColor: p.is_available ? '#dcfce7' : '#fee2e2', color: p.is_available ? '#15803d' : '#b91c1c'}}>
                       {p.is_available ? 'Bor' : "Yo'q"}
                     </button>
-                    <button onClick={() => deleteProduct(p.id)} className="text-gray-300 hover:text-red-500 flex-shrink-0">✕</button>
+                    <button onClick={() => deleteProduct(p.id)} style={{color:'#d1d5db', background:'none', border:'none', cursor:'pointer', fontSize:'18px', flexShrink:0}}>✕</button>
                   </div>
                 )
               })}
@@ -697,37 +689,33 @@ export default function AdminPage() {
 
         {/* ===== XODIMLAR ===== */}
         {activeTab === 'xodim' && (
-          <div className="space-y-3">
-            <div className="bg-white rounded-2xl border border-gray-200 p-4">
-              <div className="font-black text-sm mb-3">Xodim qo'shish</div>
-              <div className="space-y-2">
-                <input value={newWorkerName} onChange={e => setNewWorkerName(e.target.value)}
-                  placeholder="Xodim ismi"
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
-                <input value={newWorkerPin} onChange={e => setNewWorkerPin(e.target.value.slice(0, 4))}
-                  placeholder="4 xonali PIN" type="number"
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
+          <div style={{display:'flex', flexDirection:'column', gap:'12px'}}>
+            <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', padding:'16px'}}>
+              <div style={{fontWeight:900, fontSize:'14px', marginBottom:'12px'}}>Xodim qo'shish</div>
+              <div style={{display:'flex', flexDirection:'column', gap:'8px'}}>
+                <input value={newWorkerName} onChange={e => setNewWorkerName(e.target.value)} placeholder="Xodim ismi"
+                  style={{border:'1px solid #e5e7eb', borderRadius:'12px', padding:'10px 12px', fontSize:'14px', outline:'none'}}/>
+                <input value={newWorkerPin} onChange={e => setNewWorkerPin(e.target.value.slice(0, 4))} placeholder="4 xonali PIN" type="number"
+                  style={{border:'1px solid #e5e7eb', borderRadius:'12px', padding:'10px 12px', fontSize:'14px', outline:'none'}}/>
                 <button onClick={addWorker}
-                  className="w-full py-2.5 bg-[#C8860A] text-[#1A1208] rounded-xl font-black text-sm">
+                  style={{padding:'10px', backgroundColor:'#C8860A', color:'#1A1208', borderRadius:'12px', fontWeight:900, fontSize:'14px', border:'none', cursor:'pointer'}}>
                   ＋ Xodim qo'shish
                 </button>
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-              <div className="px-4 py-3 border-b border-gray-100 font-black text-sm">
-                Xodimlar ({workers.length} ta)
-              </div>
+            <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
+              <div style={{padding:'12px 16px', borderBottom:'1px solid #f3f4f6', fontWeight:900, fontSize:'14px'}}>Xodimlar ({workers.length} ta)</div>
               {workers.map(w => (
-                <div key={w.id} className="flex items-center gap-3 px-4 py-3 border-b border-gray-50 last:border-0">
-                  <div className="w-10 h-10 rounded-full bg-[#FFF8E7] border-2 border-[#F5C842] flex items-center justify-center font-black text-[#C8860A] text-sm flex-shrink-0">
+                <div key={w.id} style={{display:'flex', alignItems:'center', gap:'12px', padding:'12px 16px', borderBottom:'1px solid #f9fafb'}}>
+                  <div style={{width:'40px', height:'40px', borderRadius:'50%', backgroundColor:'#FFF8E7', border:'2px solid #F5C842', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:900, color:'#C8860A', fontSize:'14px', flexShrink:0}}>
                     {w.name[0]}
                   </div>
-                  <div className="flex-1">
-                    <div className="font-bold text-sm">{w.name}</div>
-                    <div className="text-xs text-gray-400">PIN: {w.pin}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700, fontSize:'14px'}}>{w.name}</div>
+                    <div style={{fontSize:'12px', color:'#9ca3af'}}>PIN: {w.pin}</div>
                   </div>
-                  <button onClick={() => deleteWorker(w.id)} className="text-gray-300 hover:text-red-500">✕</button>
+                  <button onClick={() => deleteWorker(w.id)} style={{color:'#d1d5db', background:'none', border:'none', cursor:'pointer', fontSize:'18px'}}>✕</button>
                 </div>
               ))}
             </div>
@@ -736,20 +724,20 @@ export default function AdminPage() {
       </div>
 
       {/* BOTTOM NAV */}
-      <div className="fixed bottom-0 left-0 right-0 bg-[#1C1407] border-t border-[#3D2E10] z-40">
-        <div className="flex max-w-2xl mx-auto">
+      <div style={{position:'fixed', bottom:0, left:0, right:0, backgroundColor:'#1C1407', borderTop:'1px solid #3D2E10', zIndex:40}}>
+        <div style={{display:'flex', maxWidth:'672px', margin:'0 auto'}}>
           {tabs.map(t => (
             <button key={t.id} onClick={() => setActiveTab(t.id)}
-              className={`flex-1 flex flex-col items-center py-2 gap-0.5 transition-all ${activeTab === t.id ? 'text-[#F5C842]' : 'text-gray-600'}`}>
+              style={{flex:1, display:'flex', flexDirection:'column', alignItems:'center', padding:'8px 0', gap:'2px', background:'none', border:'none', cursor:'pointer', color: activeTab === t.id ? '#F5C842' : '#4b5563', transition:'color 0.2s'}}>
               {t.icon}
-              <span className="text-[10px] font-bold">{t.label}</span>
+              <span style={{fontSize:'10px', fontWeight:700}}>{t.label}</span>
             </button>
           ))}
         </div>
       </div>
 
       {toast && (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-[#1A1208] text-[#F5C842] px-5 py-2.5 rounded-full text-sm font-bold z-50 shadow-lg">
+        <div style={{position:'fixed', top:'80px', left:'50%', transform:'translateX(-50%)', backgroundColor:'#1A1208', color:'#F5C842', padding:'10px 20px', borderRadius:'999px', fontSize:'14px', fontWeight:700, zIndex:50, boxShadow:'0 4px 12px rgba(0,0,0,0.3)'}}>
           {toast}
         </div>
       )}
