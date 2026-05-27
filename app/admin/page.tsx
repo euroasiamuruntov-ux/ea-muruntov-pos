@@ -8,15 +8,9 @@ import DebtorCard from '../cashier/components/DebtorCard'
 
 type User = { id: string; name: string; role: string }
 type Category = { id: string; name: string; order_num: number }
-type Product = { 
-  id: string; 
-  name: string; 
-  price: number; 
-  category_id: string; 
-  is_available: boolean;
-  unit_type?: string;
-  kg_to_hissa?: number;
-  hissa_per_unit?: number;
+type Product = {
+  id: string; name: string; price: number; category_id: string; is_available: boolean
+  unit_type?: string; kg_to_hissa?: number; hissa_per_unit?: number
 }
 type Shift = { id: string; is_open: boolean; opened_at: string; closed_at?: string; opened_by?: string; closed_by?: string }
 type ShiftStock = { product_id: string; initial_qty: number }
@@ -27,19 +21,10 @@ type WriteOff = { id: string; product_id: string; qty: number; reason: string; w
 type StockIn = { id: string; product_id: string; qty: number; worker_id: string; created_at: string }
 type Debtor = { id: string; name: string; phone: string; total_debt: number }
 type ShiftSummary = {
-  id: string
-  opened_at: string
-  closed_at: string | null
-  is_open: boolean
-  opened_by_name: string | null
-  closed_by_name: string | null
-  order_count: number
-  total_revenue: number
-  cash_revenue: number
-  click_revenue: number
-  card_revenue: number
-  debt_revenue: number
-  ichki_count: number
+  id: string; opened_at: string; closed_at: string | null; is_open: boolean
+  opened_by_name: string | null; closed_by_name: string | null
+  order_count: number; total_revenue: number; cash_revenue: number
+  click_revenue: number; card_revenue: number; debt_revenue: number; ichki_count: number
 }
 
 type Tab = 'hisobot' | 'tarix' | 'qarzdorlar' | 'mahsulot' | 'xodim'
@@ -143,33 +128,39 @@ export default function AdminPage() {
       orderItemsData = oi || []
     }
 
-     const enriched = (report || []).map((r: any) => {
-  const prod = products.find((p: any) => p.id === r.product_id)
-  const initial = stockData?.find((s: any) => s.product_id === r.product_id)?.initial_qty || 0
+    const enriched = (report || []).map((r: any) => {
+      const prod = products.find((p: any) => p.id === r.product_id)
+      const initial = stockData?.find((s: any) => s.product_id === r.product_id)?.initial_qty || 0
 
-  // Osh uchun kg → hissa → porsiya
-  let kirim = 0
-  if (prod?.unit_type === 'hissa') {
-    const kgKirim = siData?.filter((si: any) => si.product_id === r.product_id)
-      .reduce((s: number, si: any) => s + si.qty, 0) || 0
-    const hissaKirim = Math.round(kgKirim * (prod.kg_to_hissa || 21))
-    kirim = Math.floor(hissaKirim / (prod.hissa_per_unit || 3))
-  } else {
-    kirim = siData?.filter((si: any) => si.product_id === r.product_id)
-      .reduce((s: number, si: any) => s + si.qty, 0) || 0
-  }
+      const sotildi = orderItemsData
+        .filter((oi: any) => oi.product_id === r.product_id)
+        .reduce((s: number, oi: any) => s + oi.qty, 0)
 
-  const sotildi = orderItemsData
-    .filter((oi: any) => oi.product_id === r.product_id)
-    .reduce((s: number, oi: any) => s + oi.qty, 0)
+      const chiqim = woData?.filter((w: any) => w.product_id === r.product_id)
+        .reduce((s: number, w: any) => s + w.qty, 0) || 0
 
-  const chiqim = woData?.filter((w: any) => w.product_id === r.product_id)
-    .reduce((s: number, w: any) => s + w.qty, 0) || 0
+      let kirim = 0
 
-  const qoldiq = initial + kirim - sotildi - chiqim
+      if (prod?.unit_type === 'hissa') {
+        // Osh: stock_ins da kg saqlanadi → porsiyaga o'giramiz
+        const kgKirim = siData?.filter((si: any) => si.product_id === r.product_id)
+          .reduce((s: number, si: any) => s + si.qty, 0) || 0
+        if (kgKirim > 0) {
+          const hissaKirim = Math.round(kgKirim * (prod.kg_to_hissa || 21))
+          kirim = Math.floor(hissaKirim / (prod.hissa_per_unit || 3))
+        }
+        // Osh uchun qoldiq = kassir smena yopishda kiritgan haqiqiy qoldiq
+        const qoldiq = r.actual_qty
+        return { ...r, initial, kirim, sotildi, chiqim, qoldiq }
+      }
 
-  return { ...r, initial, kirim, sotildi, chiqim, qoldiq }
-}).filter((r: any) => r.initial > 0 || r.kirim > 0 || r.sotildi > 0 || r.chiqim > 0)
+      // Oddiy mahsulotlar
+      kirim = siData?.filter((si: any) => si.product_id === r.product_id)
+        .reduce((s: number, si: any) => s + si.qty, 0) || 0
+      const qoldiq = initial + kirim - sotildi - chiqim
+      return { ...r, initial, kirim, sotildi, chiqim, qoldiq }
+
+    }).filter((r: any) => r.initial > 0 || r.kirim > 0 || r.sotildi > 0 || r.chiqim > 0)
 
     setShiftReports(prev => ({ ...prev, [shiftId]: enriched }))
   }
@@ -588,7 +579,7 @@ export default function AdminPage() {
                                 {report.map((r: any) => (
                                   <tr key={r.id} style={{borderTop:'1px solid #f9fafb'}}>
                                     <td style={{padding:'6px 12px', fontWeight:700}}>{r.products?.name || '—'}</td>
-                                    <td style={{padding:'6px 4px', textAlign:'center', color:'#6b7280'}}>{r.initial}</td>
+                                    <td style={{padding:'6px 4px', textAlign:'center', color:'#6b7280'}}>{r.initial || '—'}</td>
                                     <td style={{padding:'6px 4px', textAlign:'center', color:'#16a34a', fontWeight:700}}>{r.kirim > 0 ? `+${r.kirim}` : '—'}</td>
                                     <td style={{padding:'6px 4px', textAlign:'center', color:'#C8860A', fontWeight:700}}>{r.sotildi > 0 ? r.sotildi : '—'}</td>
                                     <td style={{padding:'6px 4px', textAlign:'center', color:'#ef4444', fontWeight:700}}>{r.chiqim > 0 ? r.chiqim : '—'}</td>
@@ -756,7 +747,7 @@ export default function AdminPage() {
         <div style={{display:'flex', maxWidth:'672px', margin:'0 auto'}}>
           {tabs.map(t => (
             <button key={t.id} onClick={() => setActiveTab(t.id)}
-              style={{flex:1, display:'flex', flexDirection:'column', alignItems:'center', padding:'8px 0', gap:'2px', background:'none', border:'none', cursor:'pointer', color: activeTab === t.id ? '#F5C842' : '#4b5563', transition:'color 0.2s'}}>
+              style={{flex:1, display:'flex', flexDirection:'column', alignItems:'center', padding:'8px 0', gap:'2px', background:'none', border:'none', cursor:'pointer', color: activeTab === t.id ? '#F5C842' : '#4b5563'}}>
               {t.icon}
               <span style={{fontSize:'10px', fontWeight:700}}>{t.label}</span>
             </button>
@@ -765,7 +756,7 @@ export default function AdminPage() {
       </div>
 
       {toast && (
-        <div style={{position:'fixed', top:'80px', left:'50%', transform:'translateX(-50%)', backgroundColor:'#1A1208', color:'#F5C842', padding:'10px 20px', borderRadius:'999px', fontSize:'14px', fontWeight:700, zIndex:50, boxShadow:'0 4px 12px rgba(0,0,0,0.3)'}}>
+        <div style={{position:'fixed', top:'80px', left:'50%', transform:'translateX(-50%)', backgroundColor:'#1A1208', color:'#F5C842', padding:'10px 20px', borderRadius:'999px', fontSize:'14px', fontWeight:700, zIndex:50, boxShadow:'0 4px 12px rgba(0,0,0,0.3)', whiteSpace:'nowrap'}}>
           {toast}
         </div>
       )}
