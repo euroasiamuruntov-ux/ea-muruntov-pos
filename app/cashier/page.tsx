@@ -168,25 +168,46 @@ export default function CashierPage() {
   }
 
   const doOpenShift = async () => {
-    setLoading(true)
-    const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
-    const { data } = await supabase
-      .from('shifts').insert({ opened_by: u.id, is_open: true }).select().single()
+  setLoading(true)
+  const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
+  const { data } = await supabase
+    .from('shifts').insert({ opened_by: u.id, is_open: true }).select().single()
 
-    if (data) {
-      const stockRows = products.map(p => {
-        const prev = prevStocks.find(ps => ps.product_id === p.id)
-        return { shift_id: data.id, product_id: p.id, initial_qty: prev ? prev.qty : 0 }
-      })
-      await supabase.from('shift_stock').insert(stockRows)
-      setShift(data)
-      showToast('✅ Smena ochildi!')
-      setPrevStocks([])
-      await loadData()
+  if (data) {
+    const stockRows = products.map(p => {
+      const prev = prevStocks.find(ps => ps.product_id === p.id)
+      return { shift_id: data.id, product_id: p.id, initial_qty: prev ? prev.qty : 0 }
+    })
+    await supabase.from('shift_stock').insert(stockRows)
+
+    // Osh uchun osh_stock ga ham yozamiz
+    const oshProducts = products.filter(p => p.unit_type === 'hissa')
+    if (oshProducts.length > 0) {
+      let totalHissa = 0
+      for (const oshProd of oshProducts) {
+        const prev = prevStocks.find(ps => ps.product_id === oshProd.id)
+        if (prev && prev.qty > 0) {
+          totalHissa += prev.qty * (oshProd.hissa_per_unit || 3)
+        }
+      }
+      if (totalHissa > 0) {
+        await supabase.from('osh_stock').insert({
+          shift_id: data.id,
+          product_group: 'osh',
+          total_hissa: totalHissa,
+        })
+        setHissaStock({ [data.id]: totalHissa })
+      }
     }
-    setLoading(false)
-    setActiveModal(null)
+
+    setShift(data)
+    showToast('✅ Smena ochildi!')
+    setPrevStocks([])
+    await loadData()
   }
+  setLoading(false)
+  setActiveModal(null)
+}
 
   // SMENA YOPISH
   const closeShift = async () => {
