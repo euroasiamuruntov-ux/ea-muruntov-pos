@@ -22,7 +22,7 @@ type StockIn = { id: string; product_id: string; qty: number }
 type WriteOff = { id: string; product_id: string; qty: number }
 type OrderItem = { order_id: string; product_id: string; qty: number }
 type Debtor = { id: string; name: string; phone: string; total_debt: number }
-type PrevStock = { product_id: string; name: string; qty: number; note: string }
+type PrevStock = { product_id: string; name: string; qty: number; qty_original: number; note: string }
 type ActiveModal = null | 'pay' | 'kirим' | 'chiqim' | 'smena' | 'moslashuv' | 'debtors' | 'close_shift' | 'shift_start'
 
 export default function CashierPage() {
@@ -156,6 +156,7 @@ export default function CashierPage() {
           product_id: r.product_id,
           name: r.products?.name || '',
           qty: r.actual_qty,
+          qty_original: r.actual_qty,
           note: '',
         }))
         setPrevStocks(prevList)
@@ -168,46 +169,60 @@ export default function CashierPage() {
   }
 
   const doOpenShift = async () => {
-  setLoading(true)
-  const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
-  const { data } = await supabase
-    .from('shifts').insert({ opened_by: u.id, is_open: true }).select().single()
+    setLoading(true)
+    const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
+    const { data } = await supabase
+      .from('shifts').insert({ opened_by: u.id, is_open: true }).select().single()
 
-  if (data) {
-    const stockRows = products.map(p => {
-      const prev = prevStocks.find(ps => ps.product_id === p.id)
-      return { shift_id: data.id, product_id: p.id, initial_qty: prev ? prev.qty : 0 }
-    })
-    await supabase.from('shift_stock').insert(stockRows)
+    if (data) {
+      const stockRows = products.map(p => {
+        const prev = prevStocks.find(ps => ps.product_id === p.id)
+        return { shift_id: data.id, product_id: p.id, initial_qty: prev ? prev.qty : 0 }
+      })
+      await supabase.from('shift_stock').insert(stockRows)
 
-    // Osh uchun osh_stock ga ham yozamiz
-    const oshProducts = products.filter(p => p.unit_type === 'hissa')
-    if (oshProducts.length > 0) {
-      let totalHissa = 0
-      for (const oshProd of oshProducts) {
-        const prev = prevStocks.find(ps => ps.product_id === oshProd.id)
-        if (prev && prev.qty > 0) {
-          totalHissa += prev.qty * (oshProd.hissa_per_unit || 3)
+      // Kassir 0 qilgan mahsulotlarni write_offs ga yozamiz
+      const zeroedProducts = prevStocks.filter(ps => ps.qty === 0 && ps.qty_original > 0)
+      if (zeroedProducts.length > 0) {
+        const woRows = zeroedProducts.map(ps => ({
+          shift_id: data.id,
+          product_id: ps.product_id,
+          qty: ps.qty_original,
+          reason: ps.note || 'Smena boshida chiqindi',
+          worker_id: u.id,
+        }))
+        await supabase.from('write_offs').insert(woRows)
+      }
+
+      // Osh uchun osh_stock ga yozamiz
+      const oshProducts = products.filter(p => p.unit_type === 'hissa')
+      if (oshProducts.length > 0) {
+        const butun = oshProducts.find(p => p.hissa_per_unit === 3)
+        const yarim = oshProducts.find(p => p.hissa_per_unit === 2)
+        const butunPrev = prevStocks.find(ps => ps.product_id === butun?.id)
+        const yarimPrev = prevStocks.find(ps => ps.product_id === yarim?.id)
+        const butunHissa = (butunPrev?.qty || 0) * 3
+        const yarimHissa = (yarimPrev?.qty || 0) * 2
+        const totalHissa = Math.max(butunHissa, yarimHissa)
+
+        if (totalHissa > 0) {
+          await supabase.from('osh_stock').insert({
+            shift_id: data.id,
+            product_group: 'osh',
+            total_hissa: totalHissa,
+          })
+          setHissaStock({ [data.id]: totalHissa })
         }
       }
-      if (totalHissa > 0) {
-        await supabase.from('osh_stock').insert({
-          shift_id: data.id,
-          product_group: 'osh',
-          total_hissa: totalHissa,
-        })
-        setHissaStock({ [data.id]: totalHissa })
-      }
-    }
 
-    setShift(data)
-    showToast('✅ Smena ochildi!')
-    setPrevStocks([])
-    await loadData()
+      setShift(data)
+      showToast('✅ Smena ochildi!')
+      setPrevStocks([])
+      await loadData()
+    }
+    setLoading(false)
+    setActiveModal(null)
   }
-  setLoading(false)
-  setActiveModal(null)
-}
 
   // SMENA YOPISH
   const closeShift = async () => {
@@ -247,31 +262,22 @@ export default function CashierPage() {
   }[]) => {
     const doc = new jsPDF()
     let y = 20
-
     doc.setFontSize(18); doc.setFont('helvetica', 'bold')
     doc.text('EA MURUNTOV - Smena Hisoboti', 105, y, { align: 'center' }); y += 10
-
     doc.setFontSize(10); doc.setFont('helvetica', 'normal')
     doc.text(`Sana: ${new Date().toLocaleDateString('ru-RU')}`, 105, y, { align: 'center' }); y += 6
     doc.text(
       `Smena: ${new Date(shift!.opened_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} — ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`,
       105, y, { align: 'center' }
     ); y += 10
-
     doc.setLineWidth(0.5); doc.line(20, y, 190, y); y += 8
-
     doc.setFontSize(12); doc.setFont('helvetica', 'bold')
     doc.text('Mahsulot hisobi:', 20, y); y += 8
-
     doc.setFontSize(9); doc.setFont('helvetica', 'bold')
     doc.setFillColor(240, 240, 240)
     doc.rect(20, y - 4, 170, 8, 'F')
-    doc.text('Mahsulot', 22, y)
-    doc.text('Tizim', 110, y)
-    doc.text('Haqiqiy', 130, y)
-    doc.text('Farq', 155, y)
-    y += 8
-
+    doc.text('Mahsulot', 22, y); doc.text('Tizim', 110, y)
+    doc.text('Haqiqiy', 130, y); doc.text('Farq', 155, y); y += 8
     doc.setFont('helvetica', 'normal')
     reportRows.forEach(r => {
       if (y > 265) { doc.addPage(); y = 20 }
@@ -283,15 +289,12 @@ export default function CashierPage() {
       doc.text(String(r.actual_qty), 135, y)
       doc.text(r.diff === 0 ? '—' : (r.diff > 0 ? '+' : '') + String(r.diff), 158, y)
       if (r.note) {
-        y += 5
-        doc.setFontSize(8); doc.setTextColor(120, 120, 120)
+        y += 5; doc.setFontSize(8); doc.setTextColor(120, 120, 120)
         doc.text(`  Izoh: ${r.note}`, 22, y)
         doc.setFontSize(9); doc.setTextColor(0, 0, 0)
       }
-      doc.setTextColor(0, 0, 0)
-      y += 7
+      doc.setTextColor(0, 0, 0); y += 7
     })
-
     const withDiff = reportRows.filter(r => r.diff !== 0)
     if (withDiff.length > 0) {
       y += 4; doc.setLineWidth(0.3); doc.line(20, y, 190, y); y += 8
@@ -304,14 +307,11 @@ export default function CashierPage() {
         doc.setTextColor(180, 50, 50)
         doc.text(`${prod?.name || ''}: ${r.diff > 0 ? '+' : ''}${r.diff} ta`, 25, y)
         if (r.note) { doc.setTextColor(100, 100, 100); doc.text(`Izoh: ${r.note}`, 100, y) }
-        doc.setTextColor(0, 0, 0)
-        y += 7
+        doc.setTextColor(0, 0, 0); y += 7
       })
     }
-
     doc.setFontSize(8); doc.setTextColor(150, 150, 150)
     doc.text('Zarafshon Dasturchilari | EA Muruntov POS', 105, 285, { align: 'center' })
-
     const sana = new Date().toLocaleDateString('ru-RU').replace(/\./g, '-')
     const vaqt = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }).replace(':', '-')
     doc.save(`smena-hisobot-${sana}-${vaqt}.pdf`)
@@ -353,7 +353,6 @@ export default function CashierPage() {
   const addToCart = (product: Product) => {
     if (!shift) { showToast('Avval smena oching!'); return }
     if (!product.is_available) return
-
     if (!product.is_unlimited) {
       if (product.unit_type === 'hissa') {
         const qoldiq = getHissaQoldiq(product)
@@ -368,7 +367,6 @@ export default function CashierPage() {
         }
       }
     }
-
     const existing = cart.find(i => i.product.id === product.id)
     if (existing) {
       updateBillCart(cart.map(i => i.product.id === product.id ? { ...i, qty: i.qty + 1 } : i))
@@ -404,7 +402,6 @@ export default function CashierPage() {
     if (cart.length === 0) return
     setLoading(true)
     const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
-
     let debtorId = selectedDebtorId || null
 
     if (payType === 'qarz' && !selectedDebtorId && debtorName.trim()) {
@@ -429,15 +426,11 @@ export default function CashierPage() {
       : null
 
     const { data: order, error } = await supabase.from('orders').insert({
-      shift_id: shift?.id || null,
-      worker_id: u.id,
-      total: payType === 'ichki' ? 0 : total,
-      pay_type: payType,
+      shift_id: shift?.id || null, worker_id: u.id,
+      total: payType === 'ichki' ? 0 : total, pay_type: payType,
       debtor_name: payType === 'qarz'
-        ? (debtorName || debtors.find(d => d.id === selectedDebtorId)?.name)
-        : null,
-      debtor_id: debtorId,
-      debt_paid: payType !== 'qarz',
+        ? (debtorName || debtors.find(d => d.id === selectedDebtorId)?.name) : null,
+      debtor_id: debtorId, debt_paid: payType !== 'qarz',
       actual_paid: payType === 'ichki' ? 0 : actualPaid,
       payment_note: paymentNote,
     }).select().single()
@@ -471,23 +464,19 @@ export default function CashierPage() {
     showToast(`✅ Hisob ${activeBillId} tasdiqlandi!`)
   }
 
-  // KIRIM — TUZATILGAN (kampot uchun litr → stakan)
+  // KIRIM
   const confirmKirim = async () => {
     if (!selectedProd || !qty) return
     setLoading(true)
     const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
     const prod = products.find(p => p.id === selectedProd)
-
-    // Kampot uchun litrni stakanga o'giramiz, boshqalar uchun o'zgicha
     const savedQty = prod?.litr_per_unit
       ? Math.floor(parseFloat(qty) / prod.litr_per_unit)
       : parseFloat(qty)
 
     const { data: newSi } = await supabase.from('stock_ins').insert({
-      shift_id: shift?.id || null,
-      product_id: selectedProd,
-      qty: savedQty, // ← stakan saqlanadi
-      worker_id: u.id,
+      shift_id: shift?.id || null, product_id: selectedProd,
+      qty: savedQty, worker_id: u.id,
     }).select().single()
     if (newSi) setStockIns(prev => [...prev, newSi])
 
@@ -509,7 +498,6 @@ export default function CashierPage() {
     const toastMsg = prod?.litr_per_unit
       ? `✅ ${parseFloat(qty)}L = ${savedQty} stakan kirim!`
       : '✅ Kirim qilindi!'
-
     setSelectedProd(''); setQty('')
     setActiveModal(null); setLoading(false)
     showToast(toastMsg)
@@ -520,16 +508,13 @@ export default function CashierPage() {
     if (!selectedProd || !qty || !reason.trim()) return
     setLoading(true)
     const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
-
     const { data: newWo } = await supabase.from('write_offs').insert({
       shift_id: shift?.id || null, product_id: selectedProd,
       qty: parseInt(qty), reason: reason.trim(), worker_id: u.id,
     }).select().single()
-
     if (newWo) setWriteOffs(prev => [...prev, {
       id: newWo.id, product_id: newWo.product_id, qty: newWo.qty
     }])
-
     setSelectedProd(''); setQty(''); setReason('')
     setActiveModal(null); setLoading(false)
     showToast('⚠️ Chiqim qilindi!')
@@ -537,7 +522,6 @@ export default function CashierPage() {
 
   return (
     <div className="h-screen bg-[#F5F3EE] flex flex-col overflow-hidden">
-
       {/* TOPBAR */}
       <div className="bg-[#1C1407] px-3 py-2 flex items-center justify-between flex-shrink-0">
         <div>
@@ -578,7 +562,6 @@ export default function CashierPage() {
           </button>
         </div>
       ) : (
-
       <div className="flex flex-1 overflow-hidden">
         {/* CHAP: MENYU */}
         <div className="flex flex-col border-r border-[#E0DDD5]" style={{width:'62%'}}>
@@ -590,7 +573,6 @@ export default function CashierPage() {
               </button>
             ))}
           </div>
-
           <div className="flex-1 overflow-y-auto p-3">
             <div className="grid grid-cols-3 gap-3">
               {filteredProducts.map(p => {
@@ -598,7 +580,6 @@ export default function CashierPage() {
                 const isHissa = p.unit_type === 'hissa'
                 const hissaQoldiq = getHissaQoldiq(p)
                 const donaQoldiq = getDonaQoldiq(p.id)
-                // Kampot: stock_ins da stakan saqlanadi, donaQoldiq = stakan
                 const isKampot = !isHissa && p.litr_per_unit !== null && p.litr_per_unit > 0
                 const kampotStakan = isKampot ? donaQoldiq : null
                 const tugadi = !p.is_unlimited && (
@@ -606,7 +587,6 @@ export default function CashierPage() {
                   isKampot ? (kampotStakan !== null && kampotStakan <= 0) :
                   donaQoldiq !== null && donaQoldiq <= 0
                 )
-
                 return (
                   <div key={p.id} onClick={() => addToCart(p)}
                     className={`bg-white rounded-2xl overflow-hidden cursor-pointer border-2 transition-all select-none
@@ -673,11 +653,9 @@ export default function CashierPage() {
               <Plus size={16}/>
             </button>
           </div>
-
           <div className="px-4 py-2 flex-shrink-0">
             <div className="text-gray-400 text-xs">{cart.length > 0 ? `${cart.length} xil mahsulot` : "Savat bo'sh"}</div>
           </div>
-
           <div className="flex-1 overflow-y-auto px-3 py-1">
             {cart.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-gray-300 gap-3">
@@ -705,7 +683,6 @@ export default function CashierPage() {
               ))
             )}
           </div>
-
           <div className="px-4 py-3 border-t-2 border-gray-100 flex-shrink-0">
             <div className="flex justify-between items-baseline mb-2">
               <span className="text-gray-500 font-bold text-sm">Jami:</span>
@@ -730,19 +707,25 @@ export default function CashierPage() {
           <div className="bg-white rounded-2xl w-full max-w-lg flex flex-col" style={{maxHeight:'92vh'}}>
             <div className="px-5 py-4 border-b border-gray-100 flex-shrink-0">
               <div className="font-black text-base">📋 O'tgan smena qoldiqlari</div>
-              <div className="text-xs text-gray-400 mt-1">Miqdorni tekshiring, kerak bo'lsa o'zgartiring</div>
+              <div className="text-xs text-gray-400 mt-1">Miqdorni tekshiring. 0 qilsangiz — chiqindi sifatida saqlanadi</div>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-2">
               {prevStocks.map((ps, i) => (
                 <div key={ps.product_id} className="bg-gray-50 rounded-xl p-3">
                   <div className="flex items-center gap-2 mb-1">
                     <div className="flex-1 font-bold text-sm">{ps.name}</div>
+                    <div className="text-xs text-gray-400 flex-shrink-0">O'tgan: <b>{ps.qty_original}</b></div>
                     <input type="number" value={ps.qty}
                       onChange={e => setPrevStocks(prev => prev.map((x, j) =>
                         j === i ? { ...x, qty: parseFloat(e.target.value) || 0 } : x
                       ))}
                       className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-center text-sm font-bold outline-none focus:border-[#C8860A]"/>
                   </div>
+                  {ps.qty < ps.qty_original && (
+                    <div className="text-xs text-orange-500 font-bold mb-1">
+                      ⚠ {ps.qty_original - ps.qty} ta chiqindi sifatida yoziladi
+                    </div>
+                  )}
                   <input type="text" placeholder="Izoh (ixtiyoriy)..." value={ps.note}
                     onChange={e => setPrevStocks(prev => prev.map((x, j) =>
                       j === i ? { ...x, note: e.target.value } : x

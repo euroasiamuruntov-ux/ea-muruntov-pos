@@ -129,38 +129,47 @@ export default function AdminPage() {
     }
 
     const enriched = (report || []).map((r: any) => {
-      const prod = products.find((p: any) => p.id === r.product_id)
-      const initial = stockData?.find((s: any) => s.product_id === r.product_id)?.initial_qty || 0
+  const prod = products.find((p: any) => p.id === r.product_id)
+  const initial = stockData?.find((s: any) => s.product_id === r.product_id)?.initial_qty || 0
 
-      const sotildi = orderItemsData
-        .filter((oi: any) => oi.product_id === r.product_id)
-        .reduce((s: number, oi: any) => s + oi.qty, 0)
+  const sotildi = orderItemsData
+    .filter((oi: any) => oi.product_id === r.product_id)
+    .reduce((s: number, oi: any) => s + oi.qty, 0)
 
-      const chiqim = woData?.filter((w: any) => w.product_id === r.product_id)
-        .reduce((s: number, w: any) => s + w.qty, 0) || 0
+  // Chiqimlar: smena boshi chiqimlari (reason = 'Smena boshida chiqindi') alohida
+  const smenaChiqim = woData?.filter((w: any) =>
+    w.product_id === r.product_id &&
+    w.reason === 'Smena boshida chiqindi'
+  ).reduce((s: number, w: any) => s + w.qty, 0) || 0
 
-      let kirim = 0
+  const oddiyChiqim = woData?.filter((w: any) =>
+    w.product_id === r.product_id &&
+    w.reason !== 'Smena boshida chiqindi'
+  ).reduce((s: number, w: any) => s + w.qty, 0) || 0
 
-      if (prod?.unit_type === 'hissa') {
-        // Osh: stock_ins da kg saqlanadi → porsiyaga o'giramiz
-        const kgKirim = siData?.filter((si: any) => si.product_id === r.product_id)
-          .reduce((s: number, si: any) => s + si.qty, 0) || 0
-        if (kgKirim > 0) {
-          const hissaKirim = Math.round(kgKirim * (prod.kg_to_hissa || 21))
-          kirim = Math.floor(hissaKirim / (prod.hissa_per_unit || 3))
-        }
-        // Osh uchun qoldiq = kassir smena yopishda kiritgan haqiqiy qoldiq
-        const qoldiq = r.actual_qty
-        return { ...r, initial, kirim, sotildi, chiqim, qoldiq }
-      }
+  // Boshlang'ich = shift_stock.initial_qty + smena boshi chiqimlari
+  // (chunki shift_stock da 0 saqlangan, asl qoldiq chiqimda ko'rinadi)
+  const realInitial = initial + smenaChiqim
 
-      // Oddiy mahsulotlar
-      kirim = siData?.filter((si: any) => si.product_id === r.product_id)
-        .reduce((s: number, si: any) => s + si.qty, 0) || 0
-      const qoldiq = initial + kirim - sotildi - chiqim
-      return { ...r, initial, kirim, sotildi, chiqim, qoldiq }
+  let kirim = 0
 
-    }).filter((r: any) => r.initial > 0 || r.kirim > 0 || r.sotildi > 0 || r.chiqim > 0)
+  if (prod?.unit_type === 'hissa') {
+    const kgKirim = siData?.filter((si: any) => si.product_id === r.product_id)
+      .reduce((s: number, si: any) => s + si.qty, 0) || 0
+    if (kgKirim > 0) {
+      const hissaKirim = Math.round(kgKirim * (prod.kg_to_hissa || 21))
+      kirim = Math.floor(hissaKirim / (prod.hissa_per_unit || 3))
+    }
+    const qoldiq = r.actual_qty
+    return { ...r, initial: realInitial, kirim, sotildi, chiqim: oddiyChiqim, smenaChiqim, qoldiq }
+  }
+
+  kirim = siData?.filter((si: any) => si.product_id === r.product_id)
+    .reduce((s: number, si: any) => s + si.qty, 0) || 0
+  const qoldiq = realInitial + kirim - sotildi - oddiyChiqim - smenaChiqim
+  return { ...r, initial: realInitial, kirim, sotildi, chiqim: oddiyChiqim + smenaChiqim, smenaChiqim, qoldiq }
+
+}).filter((r: any) => r.initial > 0 || r.kirim > 0 || r.sotildi > 0 || r.chiqim > 0)
 
     setShiftReports(prev => ({ ...prev, [shiftId]: enriched }))
   }
