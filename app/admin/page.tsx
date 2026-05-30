@@ -129,47 +129,50 @@ export default function AdminPage() {
     }
 
     const enriched = (report || []).map((r: any) => {
-  const prod = products.find((p: any) => p.id === r.product_id)
-  const initial = stockData?.find((s: any) => s.product_id === r.product_id)?.initial_qty || 0
+      const prod = products.find((p: any) => p.id === r.product_id)
+      const initial = stockData?.find((s: any) => s.product_id === r.product_id)?.initial_qty || 0
 
-  const sotildi = orderItemsData
-    .filter((oi: any) => oi.product_id === r.product_id)
-    .reduce((s: number, oi: any) => s + oi.qty, 0)
+      const sotildi = orderItemsData
+        .filter((oi: any) => oi.product_id === r.product_id)
+        .reduce((s: number, oi: any) => s + oi.qty, 0)
 
-  // Chiqimlar: smena boshi chiqimlari (reason = 'Smena boshida chiqindi') alohida
-  const smenaChiqim = woData?.filter((w: any) =>
-    w.product_id === r.product_id &&
-    w.reason === 'Smena boshida chiqindi'
-  ).reduce((s: number, w: any) => s + w.qty, 0) || 0
+      // Smena boshi chiqimlari (kassir 0 qilganlar)
+      const smenaChiqim = woData?.filter((w: any) =>
+        w.product_id === r.product_id &&
+        w.reason === 'Smena boshida chiqindi'
+      ).reduce((s: number, w: any) => s + w.qty, 0) || 0
 
-  const oddiyChiqim = woData?.filter((w: any) =>
-    w.product_id === r.product_id &&
-    w.reason !== 'Smena boshida chiqindi'
-  ).reduce((s: number, w: any) => s + w.qty, 0) || 0
+      // Oddiy chiqimlar (smena davomida)
+      const oddiyChiqim = woData?.filter((w: any) =>
+        w.product_id === r.product_id &&
+        w.reason !== 'Smena boshida chiqindi'
+      ).reduce((s: number, w: any) => s + w.qty, 0) || 0
 
-  // Boshlang'ich = shift_stock.initial_qty + smena boshi chiqimlari
-  // (chunki shift_stock da 0 saqlangan, asl qoldiq chiqimda ko'rinadi)
-  const realInitial = initial + smenaChiqim
+      const totalChiqim = oddiyChiqim + smenaChiqim
+      // Haqiqiy boshlang'ich = shift_stock + smena boshi chiqimlari
+      const realInitial = initial + smenaChiqim
 
-  let kirim = 0
+      let kirim = 0
 
-  if (prod?.unit_type === 'hissa') {
-    const kgKirim = siData?.filter((si: any) => si.product_id === r.product_id)
-      .reduce((s: number, si: any) => s + si.qty, 0) || 0
-    if (kgKirim > 0) {
-      const hissaKirim = Math.round(kgKirim * (prod.kg_to_hissa || 21))
-      kirim = Math.floor(hissaKirim / (prod.hissa_per_unit || 3))
-    }
-    const qoldiq = r.actual_qty
-    return { ...r, initial: realInitial, kirim, sotildi, chiqim: oddiyChiqim, smenaChiqim, qoldiq }
-  }
+      if (prod?.unit_type === 'hissa') {
+        const kgKirim = siData?.filter((si: any) => si.product_id === r.product_id)
+          .reduce((s: number, si: any) => s + si.qty, 0) || 0
+        if (kgKirim > 0) {
+          const hissaKirim = Math.round(kgKirim * (prod.kg_to_hissa || 21))
+          kirim = Math.floor(hissaKirim / (prod.hissa_per_unit || 3))
+        }
+        // Osh uchun qoldiq = kassir kiritgan haqiqiy qoldiq
+        const qoldiq = r.actual_qty
+        return { ...r, initial: realInitial, kirim, sotildi, chiqim: totalChiqim, qoldiq }
+      }
 
-  kirim = siData?.filter((si: any) => si.product_id === r.product_id)
-    .reduce((s: number, si: any) => s + si.qty, 0) || 0
-  const qoldiq = realInitial + kirim - sotildi - oddiyChiqim - smenaChiqim
-  return { ...r, initial: realInitial, kirim, sotildi, chiqim: oddiyChiqim + smenaChiqim, smenaChiqim, qoldiq }
+      // Oddiy mahsulotlar
+      kirim = siData?.filter((si: any) => si.product_id === r.product_id)
+        .reduce((s: number, si: any) => s + si.qty, 0) || 0
+      const qoldiq = realInitial + kirim - sotildi - totalChiqim
+      return { ...r, initial: realInitial, kirim, sotildi, chiqim: totalChiqim, qoldiq }
 
-}).filter((r: any) => r.initial > 0 || r.kirim > 0 || r.sotildi > 0 || r.chiqim > 0)
+    }).filter((r: any) => r.initial > 0 || r.kirim > 0 || r.sotildi > 0 || r.chiqim > 0)
 
     setShiftReports(prev => ({ ...prev, [shiftId]: enriched }))
   }
@@ -323,7 +326,6 @@ export default function AdminPage() {
         {/* ===== HISOBOT ===== */}
         {activeTab === 'hisobot' && (
           <div style={{display:'flex', flexDirection:'column', gap:'12px'}}>
-
             {shift && (
               <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', padding:'16px'}}>
                 <div style={{fontWeight:900, fontSize:'14px', marginBottom:'8px'}}>📋 Smena</div>
@@ -588,7 +590,7 @@ export default function AdminPage() {
                                 {report.map((r: any) => (
                                   <tr key={r.id} style={{borderTop:'1px solid #f9fafb'}}>
                                     <td style={{padding:'6px 12px', fontWeight:700}}>{r.products?.name || '—'}</td>
-                                    <td style={{padding:'6px 4px', textAlign:'center', color:'#6b7280'}}>{r.initial || '—'}</td>
+                                    <td style={{padding:'6px 4px', textAlign:'center', color:'#6b7280'}}>{r.initial > 0 ? r.initial : '—'}</td>
                                     <td style={{padding:'6px 4px', textAlign:'center', color:'#16a34a', fontWeight:700}}>{r.kirim > 0 ? `+${r.kirim}` : '—'}</td>
                                     <td style={{padding:'6px 4px', textAlign:'center', color:'#C8860A', fontWeight:700}}>{r.sotildi > 0 ? r.sotildi : '—'}</td>
                                     <td style={{padding:'6px 4px', textAlign:'center', color:'#ef4444', fontWeight:700}}>{r.chiqim > 0 ? r.chiqim : '—'}</td>
