@@ -232,14 +232,39 @@ export default function AdminPage() {
   const moslashuvOrders = shiftOrders.filter(o => o.payment_note)
 
   const soldByProduct = products.map(p => {
-    const shiftOrderIds = shiftOrders.map(o => o.id)
-    const sold = orderItems.filter(oi => oi.product_id === p.id && shiftOrderIds.includes(oi.order_id)).reduce((s, oi) => s + oi.qty, 0)
-    const stock = stocks.find(s => s.product_id === p.id)
-    const writeOff = writeOffs.filter(w => w.product_id === p.id && shift && new Date(w.created_at) >= new Date(shift.opened_at)).reduce((s, w) => s + w.qty, 0)
-    const stockIn = stockIns.filter(si => si.product_id === p.id && shift && new Date(si.created_at) >= new Date(shift.opened_at)).reduce((s, si) => s + si.qty, 0)
-    const remaining = (stock?.initial_qty || 0) + stockIn - sold - writeOff
-    return { ...p, sold, writeOff, stockIn, remaining, initial: stock?.initial_qty || 0 }
-  }).filter(p => p.sold > 0 || p.writeOff > 0 || p.stockIn > 0 || p.initial > 0)
+  const shiftOrderIds = shiftOrders.map(o => o.id)
+  const sold = orderItems
+    .filter(oi => oi.product_id === p.id && shiftOrderIds.includes(oi.order_id))
+    .reduce((s, oi) => s + oi.qty, 0)
+  const stock = stocks.find(s => s.product_id === p.id)
+
+  // Smena boshi chiqimlari (kassir 0 qilganlar)
+  const smenaChiqim = writeOffs
+    .filter(w => w.product_id === p.id
+      && shift
+      && new Date(w.created_at) >= new Date(shift.opened_at)
+      && w.reason === 'Smena boshida chiqindi')
+    .reduce((s, w) => s + w.qty, 0)
+
+  // Oddiy chiqimlar
+  const oddiyChiqim = writeOffs
+    .filter(w => w.product_id === p.id
+      && shift
+      && new Date(w.created_at) >= new Date(shift.opened_at)
+      && w.reason !== 'Smena boshida chiqindi')
+    .reduce((s, w) => s + w.qty, 0)
+
+  const stockIn = stockIns
+    .filter(si => si.product_id === p.id && shift && new Date(si.created_at) >= new Date(shift.opened_at))
+    .reduce((s, si) => s + si.qty, 0)
+
+  // Haqiqiy boshlang'ich = shift_stock + smena boshi chiqimlari
+  const realInitial = (stock?.initial_qty || 0) + smenaChiqim
+  const totalChiqim = smenaChiqim + oddiyChiqim
+  const remaining = realInitial + stockIn - sold - totalChiqim
+
+  return { ...p, sold, writeOff: totalChiqim, stockIn, remaining, initial: realInitial }
+}).filter(p => p.sold > 0 || p.writeOff > 0 || p.stockIn > 0 || p.initial > 0)
 
   const payDebt = async (orderId: string) => {
     await supabase.from('orders').update({ debt_paid: true }).eq('id', orderId)
