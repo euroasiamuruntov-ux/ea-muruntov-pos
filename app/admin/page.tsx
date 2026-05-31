@@ -238,7 +238,6 @@ export default function AdminPage() {
     .reduce((s, oi) => s + oi.qty, 0)
   const stock = stocks.find(s => s.product_id === p.id)
 
-  // Smena boshi chiqimlari (kassir 0 qilganlar)
   const smenaChiqim = writeOffs
     .filter(w => w.product_id === p.id
       && shift
@@ -246,7 +245,6 @@ export default function AdminPage() {
       && w.reason === 'Smena boshida chiqindi')
     .reduce((s, w) => s + w.qty, 0)
 
-  // Oddiy chiqimlar
   const oddiyChiqim = writeOffs
     .filter(w => w.product_id === p.id
       && shift
@@ -258,11 +256,17 @@ export default function AdminPage() {
     .filter(si => si.product_id === p.id && shift && new Date(si.created_at) >= new Date(shift.opened_at))
     .reduce((s, si) => s + si.qty, 0)
 
-  // Haqiqiy boshlang'ich = shift_stock + smena boshi chiqimlari
   const realInitial = (stock?.initial_qty || 0) + smenaChiqim
   const totalChiqim = smenaChiqim + oddiyChiqim
-  const remaining = realInitial + stockIn - sold - totalChiqim
 
+  // Osh uchun qoldiq hissadan hisoblaymiz
+  if (p.unit_type === 'hissa') {
+    const hissaPerUnit = p.hissa_per_unit || 3
+    const remaining = Math.floor(oshHissa / hissaPerUnit)
+    return { ...p, sold, writeOff: totalChiqim, stockIn, remaining, initial: realInitial }
+  }
+
+  const remaining = realInitial + stockIn - sold - totalChiqim
   return { ...p, sold, writeOff: totalChiqim, stockIn, remaining, initial: realInitial }
 }).filter(p => p.sold > 0 || p.writeOff > 0 || p.stockIn > 0 || p.initial > 0)
 
