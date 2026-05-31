@@ -181,18 +181,18 @@ export default function CashierPage() {
       })
       await supabase.from('shift_stock').insert(stockRows)
 
-      // Kassir 0 qilgan mahsulotlarni write_offs ga yozamiz
-      const zeroedProducts = prevStocks.filter(ps => ps.qty === 0 && ps.qty_original > 0)
-      if (zeroedProducts.length > 0) {
-        const woRows = zeroedProducts.map(ps => ({
-          shift_id: data.id,
-          product_id: ps.product_id,
-          qty: ps.qty_original,
-          reason: ps.note || 'Smena boshida chiqindi',
-          worker_id: u.id,
-        }))
-        await supabase.from('write_offs').insert(woRows)
-      }
+      // Kassir kamaytirgan barcha mahsulotlarni write_offs ga yozamiz
+const reducedProducts = prevStocks.filter(ps => ps.qty < ps.qty_original)
+if (reducedProducts.length > 0) {
+  const woRows = reducedProducts.map(ps => ({
+    shift_id: data.id,
+    product_id: ps.product_id,
+    qty: ps.qty_original - ps.qty,  // farq = chiqindi miqdori
+    reason: ps.note || 'Smena boshida chiqindi',
+    worker_id: u.id,
+  }))
+  await supabase.from('write_offs').insert(woRows)
+}
 
       // Osh uchun osh_stock ga yozamiz
 const oshProducts = products.filter(p => p.unit_type === 'hissa')
