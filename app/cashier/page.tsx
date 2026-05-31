@@ -195,25 +195,46 @@ export default function CashierPage() {
       }
 
       // Osh uchun osh_stock ga yozamiz
-      const oshProducts = products.filter(p => p.unit_type === 'hissa')
-      if (oshProducts.length > 0) {
-        const butun = oshProducts.find(p => p.hissa_per_unit === 3)
-        const yarim = oshProducts.find(p => p.hissa_per_unit === 2)
-        const butunPrev = prevStocks.find(ps => ps.product_id === butun?.id)
-        const yarimPrev = prevStocks.find(ps => ps.product_id === yarim?.id)
-        const butunHissa = (butunPrev?.qty || 0) * 3
-        const yarimHissa = (yarimPrev?.qty || 0) * 2
-        const totalHissa = Math.max(butunHissa, yarimHissa)
+const oshProducts = products.filter(p => p.unit_type === 'hissa')
+if (oshProducts.length > 0) {
+  const butun = oshProducts.find(p => p.hissa_per_unit === 3)
+  const yarim = oshProducts.find(p => p.hissa_per_unit === 2)
+  
+  const butunPrev = prevStocks.find(ps => ps.product_id === butun?.id)
+  const yarimPrev = prevStocks.find(ps => ps.product_id === yarim?.id)
 
-        if (totalHissa > 0) {
-          await supabase.from('osh_stock').insert({
-            shift_id: data.id,
-            product_group: 'osh',
-            total_hissa: totalHissa,
-          })
-          setHissaStock({ [data.id]: totalHissa })
-        }
-      }
+  // Kassir kiritgan miqdordan hisoblaymiz (0 qilganlar ham hisobga olinadi)
+  // Butun ustunlik qiladi — chunki yarim ham butundan ajratiladi
+  // Faqat bittasidan hissa olamiz: kattasini
+  const butunQty = butunPrev?.qty || 0
+  const yarimQty = yarimPrev?.qty || 0
+  
+  // Butun porsiya hissasi: butunQty * 3
+  // Yarim porsiya hissasi: yarimQty * 2
+  // Ikkalasi bir xil havzadan — faqat kattasini olamiz
+  // LEKIN: agar kassir butun=60, yarim=105 deb kiritsa,
+  // 60*3=180 hissa va 105*2=210 hissa — qarama-qarshi!
+  // To'g'ri yechim: faqat BUTUN dan hisoblaymiz
+  const totalHissa = butunQty * 3
+
+  if (totalHissa > 0) {
+    await supabase.from('osh_stock').insert({
+      shift_id: data.id,
+      product_group: 'osh',
+      total_hissa: totalHissa,
+    })
+    setHissaStock({ [data.id]: totalHissa })
+  } else if (yarimQty > 0) {
+    // Butun 0 bo'lsa, yarimdan hisoblaymiz
+    const hissaFromYarim = yarimQty * 2
+    await supabase.from('osh_stock').insert({
+      shift_id: data.id,
+      product_group: 'osh',
+      total_hissa: hissaFromYarim,
+    })
+    setHissaStock({ [data.id]: hissaFromYarim })
+  }
+}
 
       setShift(data)
       showToast('✅ Smena ochildi!')
