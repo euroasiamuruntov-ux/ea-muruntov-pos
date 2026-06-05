@@ -693,7 +693,37 @@ if (oshProducts.length > 0) {
                   <div className="flex items-center gap-1.5 flex-shrink-0">
                     <button onClick={() => changeQty(item.product.id, -1)}
                       className="w-7 h-7 rounded-lg border border-gray-200 bg-gray-50 font-bold flex items-center justify-center hover:border-[#C8860A] hover:text-[#C8860A] transition-all">−</button>
-                    <span className="font-black text-sm w-5 text-center">{item.qty}</span>
+                    <input
+  type="number"
+  value={item.qty}
+  min={1}
+  onChange={e => {
+    const val = parseInt(e.target.value)
+    if (!val || val < 1) return
+    const prod = products.find(p => p.id === item.product.id)
+    if (prod && !prod.is_unlimited) {
+      if (prod.unit_type === 'hissa') {
+        const qoldiq = getHissaQoldiq(prod)
+        if (val > qoldiq) { showToast(`⚠️ ${prod.name} tugadi!`); return }
+      } else {
+        const qoldiq = getDonaQoldiq(item.product.id)
+        if (qoldiq !== null && val > qoldiq) { showToast(`⚠️ ${prod.name} tugadi!`); return }
+      }
+    }
+    const updated = cart.map(i => i.product.id === item.product.id ? { ...i, qty: val } : i)
+    updateBillCart(updated)
+  }}
+  style={{
+    width: '40px',
+    textAlign: 'center',
+    fontWeight: 900,
+    fontSize: '14px',
+    border: '1px solid #e5e7eb',
+    borderRadius: '6px',
+    padding: '2px 4px',
+    outline: 'none',
+  }}
+/>
                     <button onClick={() => changeQty(item.product.id, 1)}
                       className="w-7 h-7 rounded-lg border border-gray-200 bg-gray-50 font-bold flex items-center justify-center hover:border-[#C8860A] hover:text-[#C8860A] transition-all">+</button>
                   </div>
