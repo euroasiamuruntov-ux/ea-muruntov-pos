@@ -47,9 +47,30 @@ export default function CashierPage() {
   const [activeModal, setActiveModal] = useState<ActiveModal>(null)
   const [toast, setToast] = useState('')
   const [loading, setLoading] = useState(false)
-  const [bills, setBills] = useState<Bill[]>([{ id: 1, cart: [] }])
-  const [activeBillId, setActiveBillId] = useState(1)
-  const [nextBillId, setNextBillId] = useState(2)
+
+  // Savatni localStorage dan yuklaymiz
+  const [bills, setBills] = useState<Bill[]>(() => {
+    if (typeof window === 'undefined') return [{ id: 1, cart: [] }]
+    try {
+      const saved = localStorage.getItem('pos_bills')
+      return saved ? JSON.parse(saved) : [{ id: 1, cart: [] }]
+    } catch { return [{ id: 1, cart: [] }] }
+  })
+  const [activeBillId, setActiveBillId] = useState<number>(() => {
+    if (typeof window === 'undefined') return 1
+    try {
+      const saved = localStorage.getItem('pos_active_bill')
+      return saved ? parseInt(saved) : 1
+    } catch { return 1 }
+  })
+  const [nextBillId, setNextBillId] = useState<number>(() => {
+    if (typeof window === 'undefined') return 2
+    try {
+      const saved = localStorage.getItem('pos_next_bill')
+      return saved ? parseInt(saved) : 2
+    } catch { return 2 }
+  })
+
   const [selectedProd, setSelectedProd] = useState('')
   const [qty, setQty] = useState('')
   const [reason, setReason] = useState('')
@@ -59,6 +80,13 @@ export default function CashierPage() {
 
   const activeBill = bills.find(b => b.id === activeBillId)!
   const cart = activeBill?.cart || []
+
+  // Savatni localStorage ga saqlaymiz
+  useEffect(() => {
+    localStorage.setItem('pos_bills', JSON.stringify(bills))
+    localStorage.setItem('pos_active_bill', String(activeBillId))
+    localStorage.setItem('pos_next_bill', String(nextBillId))
+  }, [bills, activeBillId, nextBillId])
 
   useEffect(() => {
     const u = localStorage.getItem('pos_user')
@@ -181,60 +209,43 @@ export default function CashierPage() {
       })
       await supabase.from('shift_stock').insert(stockRows)
 
-      // Kassir kamaytirgan barcha mahsulotlarni write_offs ga yozamiz
-const reducedProducts = prevStocks.filter(ps => ps.qty < ps.qty_original)
-if (reducedProducts.length > 0) {
-  const woRows = reducedProducts.map(ps => ({
-    shift_id: data.id,
-    product_id: ps.product_id,
-    qty: ps.qty_original - ps.qty,  // farq = chiqindi miqdori
-    reason: ps.note || 'Smena boshida chiqindi',
-    worker_id: u.id,
-  }))
-  await supabase.from('write_offs').insert(woRows)
-}
+      // Kassir kamaytirgan mahsulotlarni write_offs ga yozamiz
+      const reducedProducts = prevStocks.filter(ps => ps.qty < ps.qty_original)
+      if (reducedProducts.length > 0) {
+        const woRows = reducedProducts.map(ps => ({
+          shift_id: data.id,
+          product_id: ps.product_id,
+          qty: ps.qty_original - ps.qty,
+          reason: ps.note || 'Smena boshida chiqindi',
+          worker_id: u.id,
+        }))
+        await supabase.from('write_offs').insert(woRows)
+      }
 
-      // Osh uchun osh_stock ga yozamiz
-const oshProducts = products.filter(p => p.unit_type === 'hissa')
-if (oshProducts.length > 0) {
-  const butun = oshProducts.find(p => p.hissa_per_unit === 3)
-  const yarim = oshProducts.find(p => p.hissa_per_unit === 2)
-  
-  const butunPrev = prevStocks.find(ps => ps.product_id === butun?.id)
-  const yarimPrev = prevStocks.find(ps => ps.product_id === yarim?.id)
+      // Osh uchun osh_stock
+      const oshProducts = products.filter(p => p.unit_type === 'hissa')
+      if (oshProducts.length > 0) {
+        const butun = oshProducts.find(p => p.hissa_per_unit === 3)
+        const yarim = oshProducts.find(p => p.hissa_per_unit === 2)
+        const butunPrev = prevStocks.find(ps => ps.product_id === butun?.id)
+        const yarimPrev = prevStocks.find(ps => ps.product_id === yarim?.id)
+        const butunQty = butunPrev?.qty || 0
+        const yarimQty = yarimPrev?.qty || 0
+        const totalHissa = butunQty * 3
 
-  // Kassir kiritgan miqdordan hisoblaymiz (0 qilganlar ham hisobga olinadi)
-  // Butun ustunlik qiladi — chunki yarim ham butundan ajratiladi
-  // Faqat bittasidan hissa olamiz: kattasini
-  const butunQty = butunPrev?.qty || 0
-  const yarimQty = yarimPrev?.qty || 0
-  
-  // Butun porsiya hissasi: butunQty * 3
-  // Yarim porsiya hissasi: yarimQty * 2
-  // Ikkalasi bir xil havzadan — faqat kattasini olamiz
-  // LEKIN: agar kassir butun=60, yarim=105 deb kiritsa,
-  // 60*3=180 hissa va 105*2=210 hissa — qarama-qarshi!
-  // To'g'ri yechim: faqat BUTUN dan hisoblaymiz
-  const totalHissa = butunQty * 3
-
-  if (totalHissa > 0) {
-    await supabase.from('osh_stock').insert({
-      shift_id: data.id,
-      product_group: 'osh',
-      total_hissa: totalHissa,
-    })
-    setHissaStock({ [data.id]: totalHissa })
-  } else if (yarimQty > 0) {
-    // Butun 0 bo'lsa, yarimdan hisoblaymiz
-    const hissaFromYarim = yarimQty * 2
-    await supabase.from('osh_stock').insert({
-      shift_id: data.id,
-      product_group: 'osh',
-      total_hissa: hissaFromYarim,
-    })
-    setHissaStock({ [data.id]: hissaFromYarim })
-  }
-}
+        if (totalHissa > 0) {
+          await supabase.from('osh_stock').insert({
+            shift_id: data.id, product_group: 'osh', total_hissa: totalHissa,
+          })
+          setHissaStock({ [data.id]: totalHissa })
+        } else if (yarimQty > 0) {
+          const hissaFromYarim = yarimQty * 2
+          await supabase.from('osh_stock').insert({
+            shift_id: data.id, product_group: 'osh', total_hissa: hissaFromYarim,
+          })
+          setHissaStock({ [data.id]: hissaFromYarim })
+        }
+      }
 
       setShift(data)
       showToast('✅ Smena ochildi!')
@@ -269,6 +280,14 @@ if (oshProducts.length > 0) {
       .eq('id', shift.id)
 
     generateShiftPDF(reportRows)
+
+    // Savatni tozalaymiz
+    localStorage.removeItem('pos_bills')
+    localStorage.removeItem('pos_active_bill')
+    localStorage.removeItem('pos_next_bill')
+    setBills([{ id: 1, cart: [] }])
+    setActiveBillId(1)
+    setNextBillId(2)
 
     setShift(null); setStocks([]); setStockIns([])
     setWriteOffs([]); setOrderItems([]); setHissaStock({})
@@ -350,6 +369,10 @@ if (oshProducts.length > 0) {
 
   const removeBill = (id: number) => {
     if (bills.length === 1) { showToast('Kamida 1 ta hisob!'); return }
+    const bill = bills.find(b => b.id === id)
+    if (bill && bill.cart.length > 0) {
+      if (!window.confirm(`Hisob №${id} da ${bill.cart.reduce((s, i) => s + i.qty, 0)} ta mahsulot bor. O'chirilsinmi?`)) return
+    }
     const remaining = bills.filter(b => b.id !== id)
     setBills(remaining)
     if (activeBillId === id) setActiveBillId(remaining[0].id)
@@ -585,7 +608,7 @@ if (oshProducts.length > 0) {
       ) : (
       <div className="flex flex-1 overflow-hidden">
         {/* CHAP: MENYU */}
-<div className="flex flex-col border-r border-[#E0DDD5]" style={{width:'62%'}}>
+        <div className="flex flex-col border-r border-[#E0DDD5]" style={{width:'62%'}}>
           <div className="bg-[#2C200A] px-3 py-2 flex gap-2 overflow-x-auto flex-shrink-0">
             {['Barchasi', ...categories.map(c => c.name)].map(cat => (
               <button key={cat} onClick={() => setActiveCat(cat)}
@@ -649,19 +672,8 @@ if (oshProducts.length > 0) {
           </div>
         </div>
 
-        {/* O'NG: SAVAT */}
-<div style={{
-  position:'fixed',
-  right:0,
-  top:0,
-  bottom:0,
-  width:'38%',
-  display:'flex',
-  flexDirection:'column',
-  backgroundColor:'white',
-  zIndex:20,
-  borderLeft:'1px solid #E0DDD5'
-}}>
+        {/* O'NG: SAVAT — FIXED */}
+        <div style={{position:'fixed', right:0, top:0, bottom:0, width:'38%', display:'flex', flexDirection:'column', backgroundColor:'white', zIndex:20, borderLeft:'1px solid #E0DDD5'}}>
           <div className="flex items-center gap-1 px-2 pt-2 pb-0 border-b border-gray-100 overflow-x-auto flex-shrink-0">
             {bills.map(b => (
               <div key={b.id} onClick={() => setActiveBillId(b.id)}
@@ -705,41 +717,28 @@ if (oshProducts.length > 0) {
                     <button onClick={() => changeQty(item.product.id, -1)}
                       className="w-7 h-7 rounded-lg border border-gray-200 bg-gray-50 font-bold flex items-center justify-center hover:border-[#C8860A] hover:text-[#C8860A] transition-all">−</button>
                     <input
-  type="number"
-  defaultValue={item.qty}
-  min={1}
-  onFocus={e => e.target.select()}
-  onBlur={e => {
-    const val = parseInt(e.target.value)
-    if (!val || val < 1) {
-      e.target.value = String(item.qty)
-      return
-    }
-    const prod = products.find(p => p.id === item.product.id)
-    if (prod && !prod.is_unlimited) {
-      if (prod.unit_type === 'hissa') {
-        const qoldiq = getHissaQoldiq(prod)
-        if (val > qoldiq) { showToast(`⚠️ ${prod.name} tugadi!`); e.target.value = String(item.qty); return }
-      } else {
-        const qoldiq = getDonaQoldiq(item.product.id)
-        if (qoldiq !== null && val > qoldiq) { showToast(`⚠️ ${prod.name} tugadi!`); e.target.value = String(item.qty); return }
-      }
-    }
-    const updated = cart.map(i => i.product.id === item.product.id ? { ...i, qty: val } : i)
-    updateBillCart(updated)
-  }}
-  key={item.qty}
-  style={{
-    width: '44px',
-    textAlign: 'center',
-    fontWeight: 900,
-    fontSize: '14px',
-    border: '1px solid #e5e7eb',
-    borderRadius: '6px',
-    padding: '2px 4px',
-    outline: 'none',
-  }}
-/>
+                      type="number"
+                      defaultValue={item.qty}
+                      min={1}
+                      onFocus={e => e.target.select()}
+                      onBlur={e => {
+                        const val = parseInt(e.target.value)
+                        if (!val || val < 1) { e.target.value = String(item.qty); return }
+                        const prod = products.find(p => p.id === item.product.id)
+                        if (prod && !prod.is_unlimited) {
+                          if (prod.unit_type === 'hissa') {
+                            const qoldiq = getHissaQoldiq(prod)
+                            if (val > qoldiq) { showToast(`⚠️ ${prod.name} tugadi!`); e.target.value = String(item.qty); return }
+                          } else {
+                            const qoldiq = getDonaQoldiq(item.product.id)
+                            if (qoldiq !== null && val > qoldiq) { showToast(`⚠️ ${prod.name} tugadi!`); e.target.value = String(item.qty); return }
+                          }
+                        }
+                        updateBillCart(cart.map(i => i.product.id === item.product.id ? { ...i, qty: val } : i))
+                      }}
+                      key={item.qty}
+                      style={{width:'44px', textAlign:'center', fontWeight:900, fontSize:'14px', border:'1px solid #e5e7eb', borderRadius:'6px', padding:'2px 4px', outline:'none'}}
+                    />
                     <button onClick={() => changeQty(item.product.id, 1)}
                       className="w-7 h-7 rounded-lg border border-gray-200 bg-gray-50 font-bold flex items-center justify-center hover:border-[#C8860A] hover:text-[#C8860A] transition-all">+</button>
                   </div>
@@ -750,15 +749,8 @@ if (oshProducts.length > 0) {
               ))
             )}
           </div>
-          <div style={{
-  padding:'12px 16px',
-  borderTop:'2px solid #f3f4f6',
-  flexShrink:0,
-  position:'sticky',
-  bottom:0,
-  backgroundColor:'white',
-  zIndex:10
-}}>
+          {/* PASTKI TUGMALAR — FIXED BOTTOM */}
+          <div style={{padding:'12px 16px', borderTop:'2px solid #f3f4f6', flexShrink:0, backgroundColor:'white'}}>
             <div className="flex justify-between items-baseline mb-2">
               <span className="text-gray-500 font-bold text-sm">Jami:</span>
               <span className="text-[#C8860A] font-black text-2xl">{fmt(total)} so'm</span>
