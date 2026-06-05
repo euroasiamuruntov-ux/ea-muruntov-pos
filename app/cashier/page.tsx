@@ -585,7 +585,7 @@ if (oshProducts.length > 0) {
       ) : (
       <div className="flex flex-1 overflow-hidden">
         {/* CHAP: MENYU */}
-        <div className="flex flex-col border-r border-[#E0DDD5]" style={{width:'62%'}}>
+<div className="flex flex-col border-r border-[#E0DDD5]" style={{width:'62%'}}>
           <div className="bg-[#2C200A] px-3 py-2 flex gap-2 overflow-x-auto flex-shrink-0">
             {['Barchasi', ...categories.map(c => c.name)].map(cat => (
               <button key={cat} onClick={() => setActiveCat(cat)}
@@ -650,7 +650,18 @@ if (oshProducts.length > 0) {
         </div>
 
         {/* O'NG: SAVAT */}
-        <div className="flex flex-col bg-white" style={{width:'38%'}}>
+<div style={{
+  position:'fixed',
+  right:0,
+  top:0,
+  bottom:0,
+  width:'38%',
+  display:'flex',
+  flexDirection:'column',
+  backgroundColor:'white',
+  zIndex:20,
+  borderLeft:'1px solid #E0DDD5'
+}}>
           <div className="flex items-center gap-1 px-2 pt-2 pb-0 border-b border-gray-100 overflow-x-auto flex-shrink-0">
             {bills.map(b => (
               <div key={b.id} onClick={() => setActiveBillId(b.id)}
