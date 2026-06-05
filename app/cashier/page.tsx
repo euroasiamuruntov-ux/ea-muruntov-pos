@@ -704,7 +704,15 @@ if (oshProducts.length > 0) {
               ))
             )}
           </div>
-          <div className="px-4 py-3 border-t-2 border-gray-100 flex-shrink-0">
+          <div style={{
+            padding:'12px 16px', 
+            borderTop:'2px solid #f3f4f6', 
+            flexShrink:0,
+            position:'sticky',
+            bottom:0,
+            backgroundColor:'white',
+            zIndex:10
+          }}>
             <div className="flex justify-between items-baseline mb-2">
               <span className="text-gray-500 font-bold text-sm">Jami:</span>
               <span className="text-[#C8860A] font-black text-2xl">{fmt(total)} so'm</span>
