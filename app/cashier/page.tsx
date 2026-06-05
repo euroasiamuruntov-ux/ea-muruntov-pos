@@ -695,26 +695,31 @@ if (oshProducts.length > 0) {
                       className="w-7 h-7 rounded-lg border border-gray-200 bg-gray-50 font-bold flex items-center justify-center hover:border-[#C8860A] hover:text-[#C8860A] transition-all">−</button>
                     <input
   type="number"
-  value={item.qty}
+  defaultValue={item.qty}
   min={1}
-  onChange={e => {
+  onFocus={e => e.target.select()}
+  onBlur={e => {
     const val = parseInt(e.target.value)
-    if (!val || val < 1) return
+    if (!val || val < 1) {
+      e.target.value = String(item.qty)
+      return
+    }
     const prod = products.find(p => p.id === item.product.id)
     if (prod && !prod.is_unlimited) {
       if (prod.unit_type === 'hissa') {
         const qoldiq = getHissaQoldiq(prod)
-        if (val > qoldiq) { showToast(`⚠️ ${prod.name} tugadi!`); return }
+        if (val > qoldiq) { showToast(`⚠️ ${prod.name} tugadi!`); e.target.value = String(item.qty); return }
       } else {
         const qoldiq = getDonaQoldiq(item.product.id)
-        if (qoldiq !== null && val > qoldiq) { showToast(`⚠️ ${prod.name} tugadi!`); return }
+        if (qoldiq !== null && val > qoldiq) { showToast(`⚠️ ${prod.name} tugadi!`); e.target.value = String(item.qty); return }
       }
     }
     const updated = cart.map(i => i.product.id === item.product.id ? { ...i, qty: val } : i)
     updateBillCart(updated)
   }}
+  key={item.qty}
   style={{
-    width: '40px',
+    width: '44px',
     textAlign: 'center',
     fontWeight: 900,
     fontSize: '14px',
@@ -735,14 +740,14 @@ if (oshProducts.length > 0) {
             )}
           </div>
           <div style={{
-            padding:'12px 16px', 
-            borderTop:'2px solid #f3f4f6', 
-            flexShrink:0,
-            position:'sticky',
-            bottom:0,
-            backgroundColor:'white',
-            zIndex:10
-          }}>
+  padding:'12px 16px',
+  borderTop:'2px solid #f3f4f6',
+  flexShrink:0,
+  position:'sticky',
+  bottom:0,
+  backgroundColor:'white',
+  zIndex:10
+}}>
             <div className="flex justify-between items-baseline mb-2">
               <span className="text-gray-500 font-bold text-sm">Jami:</span>
               <span className="text-[#C8860A] font-black text-2xl">{fmt(total)} so'm</span>
