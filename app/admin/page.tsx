@@ -194,10 +194,10 @@ export default function AdminPage() {
   }
 
   const deleteCategory = async (id: string) => {
-    await supabase.from('categories').delete().eq('id', id)
-    setCategories(p => p.filter(c => c.id !== id))
-  }
-
+  if (!window.confirm('Kategoriyani o\'chirasizmi?')) return
+  await supabase.from('categories').delete().eq('id', id)
+  setCategories(p => p.filter(c => c.id !== id))
+}
   const addProduct = async () => {
     if (!newProdName.trim() || !newProdPrice || !newProdCat) return
     const { data } = await supabase.from('products').insert({ name: newProdName.trim(), price: parseInt(newProdPrice), category_id: newProdCat, is_available: true }).select().single()
@@ -205,9 +205,10 @@ export default function AdminPage() {
   }
 
   const deleteProduct = async (id: string) => {
-    await supabase.from('products').delete().eq('id', id)
-    setProducts(p => p.filter(x => x.id !== id))
-  }
+  if (!window.confirm('Mahsulotni o\'chirasizmi?')) return
+  await supabase.from('products').delete().eq('id', id)
+  setProducts(p => p.filter(x => x.id !== id))
+}
 
   const addWorker = async () => {
     if (!newWorkerName.trim() || newWorkerPin.length !== 4) return
@@ -216,9 +217,10 @@ export default function AdminPage() {
   }
 
   const deleteWorker = async (id: string) => {
-    await supabase.from('users').delete().eq('id', id)
-    setWorkers(p => p.filter(x => x.id !== id))
-  }
+  if (!window.confirm('Xodimni o\'chirasizmi?')) return
+  await supabase.from('users').delete().eq('id', id)
+  setWorkers(p => p.filter(x => x.id !== id))
+}
 
   const shiftOrders = shift ? orders.filter(o => new Date(o.created_at) >= new Date(shift.opened_at)) : orders
   const totalRev = shiftOrders.filter(o => o.pay_type !== 'ichki').reduce((s, o) => s + o.total, 0)
