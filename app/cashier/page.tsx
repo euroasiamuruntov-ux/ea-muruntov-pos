@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { LogOut, ShoppingCart, Plus, X, PackagePlus, PackageMinus, Clock, Search } from 'lucide-react'
+import { LogOut, ShoppingCart, Plus, X, PackagePlus, PackageMinus, Clock, Search, UtensilsCrossed } from 'lucide-react'
 import DebtorCard from './components/DebtorCard'
 import jsPDF from 'jspdf'
 
@@ -47,8 +47,12 @@ export default function CashierPage() {
   const [activeModal, setActiveModal] = useState<ActiveModal>(null)
   const [toast, setToast] = useState('')
   const [loading, setLoading] = useState(false)
+  const [showMenu, setShowMenu] = useState(false)
+  const [newCatName, setNewCatName] = useState('')
+  const [newProdName, setNewProdName] = useState('')
+  const [newProdPrice, setNewProdPrice] = useState('')
+  const [newProdCat, setNewProdCat] = useState('')
 
-  // Savatni localStorage dan yuklaymiz
   const [bills, setBills] = useState<Bill[]>(() => {
     if (typeof window === 'undefined') return [{ id: 1, cart: [] }]
     try {
@@ -81,7 +85,6 @@ export default function CashierPage() {
   const activeBill = bills.find(b => b.id === activeBillId)!
   const cart = activeBill?.cart || []
 
-  // Savatni localStorage ga saqlaymiz
   useEffect(() => {
     localStorage.setItem('pos_bills', JSON.stringify(bills))
     localStorage.setItem('pos_active_bill', String(activeBillId))
@@ -163,7 +166,6 @@ export default function CashierPage() {
     return getDonaQoldiq(product.id) ?? 0
   }
 
-  // SMENA OCHISH
   const openShift = async () => {
     setLoading(true)
     const { data: lastShift } = await supabase
@@ -209,7 +211,6 @@ export default function CashierPage() {
       })
       await supabase.from('shift_stock').insert(stockRows)
 
-      // Kassir kamaytirgan mahsulotlarni write_offs ga yozamiz
       const reducedProducts = prevStocks.filter(ps => ps.qty < ps.qty_original)
       if (reducedProducts.length > 0) {
         const woRows = reducedProducts.map(ps => ({
@@ -222,7 +223,6 @@ export default function CashierPage() {
         await supabase.from('write_offs').insert(woRows)
       }
 
-      // Osh uchun osh_stock
       const oshProducts = products.filter(p => p.unit_type === 'hissa')
       if (oshProducts.length > 0) {
         const butun = oshProducts.find(p => p.hissa_per_unit === 3)
@@ -234,15 +234,11 @@ export default function CashierPage() {
         const totalHissa = butunQty * 3
 
         if (totalHissa > 0) {
-          await supabase.from('osh_stock').insert({
-            shift_id: data.id, product_group: 'osh', total_hissa: totalHissa,
-          })
+          await supabase.from('osh_stock').insert({ shift_id: data.id, product_group: 'osh', total_hissa: totalHissa })
           setHissaStock({ [data.id]: totalHissa })
         } else if (yarimQty > 0) {
           const hissaFromYarim = yarimQty * 2
-          await supabase.from('osh_stock').insert({
-            shift_id: data.id, product_group: 'osh', total_hissa: hissaFromYarim,
-          })
+          await supabase.from('osh_stock').insert({ shift_id: data.id, product_group: 'osh', total_hissa: hissaFromYarim })
           setHissaStock({ [data.id]: hissaFromYarim })
         }
       }
@@ -256,7 +252,6 @@ export default function CashierPage() {
     setActiveModal(null)
   }
 
-  // SMENA YOPISH
   const closeShift = async () => {
     if (!shift) return
     setLoading(true)
@@ -267,11 +262,7 @@ export default function CashierPage() {
       const rep = shiftReport[p.id]
       const actual = !rep?.actual ? systemQty : parseFloat(rep.actual)
       const diff = actual - systemQty
-      return {
-        shift_id: shift.id, product_id: p.id,
-        system_qty: systemQty, actual_qty: actual,
-        diff, note: rep?.note || '',
-      }
+      return { shift_id: shift.id, product_id: p.id, system_qty: systemQty, actual_qty: actual, diff, note: rep?.note || '' }
     })
 
     await supabase.from('shift_reports').insert(reportRows)
@@ -281,7 +272,6 @@ export default function CashierPage() {
 
     generateShiftPDF(reportRows)
 
-    // Savatni tozalaymiz
     localStorage.removeItem('pos_bills')
     localStorage.removeItem('pos_active_bill')
     localStorage.removeItem('pos_next_bill')
@@ -297,42 +287,30 @@ export default function CashierPage() {
     setActiveModal(null)
   }
 
-  const generateShiftPDF = (reportRows: {
-    product_id: string; system_qty: number; actual_qty: number; diff: number; note: string
-  }[]) => {
+  const generateShiftPDF = (reportRows: { product_id: string; system_qty: number; actual_qty: number; diff: number; note: string }[]) => {
     const doc = new jsPDF()
     let y = 20
     doc.setFontSize(18); doc.setFont('helvetica', 'bold')
     doc.text('EA MURUNTOV - Smena Hisoboti', 105, y, { align: 'center' }); y += 10
     doc.setFontSize(10); doc.setFont('helvetica', 'normal')
     doc.text(`Sana: ${new Date().toLocaleDateString('ru-RU')}`, 105, y, { align: 'center' }); y += 6
-    doc.text(
-      `Smena: ${new Date(shift!.opened_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} — ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`,
-      105, y, { align: 'center' }
-    ); y += 10
+    doc.text(`Smena: ${new Date(shift!.opened_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} — ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`, 105, y, { align: 'center' }); y += 10
     doc.setLineWidth(0.5); doc.line(20, y, 190, y); y += 8
     doc.setFontSize(12); doc.setFont('helvetica', 'bold')
     doc.text('Mahsulot hisobi:', 20, y); y += 8
     doc.setFontSize(9); doc.setFont('helvetica', 'bold')
     doc.setFillColor(240, 240, 240)
     doc.rect(20, y - 4, 170, 8, 'F')
-    doc.text('Mahsulot', 22, y); doc.text('Tizim', 110, y)
-    doc.text('Haqiqiy', 130, y); doc.text('Farq', 155, y); y += 8
+    doc.text('Mahsulot', 22, y); doc.text('Tizim', 110, y); doc.text('Haqiqiy', 130, y); doc.text('Farq', 155, y); y += 8
     doc.setFont('helvetica', 'normal')
     reportRows.forEach(r => {
       if (y > 265) { doc.addPage(); y = 20 }
       const prod = products.find(p => p.id === r.product_id)
       const name = (prod?.name || 'Noma\'lum').slice(0, 35)
       if (r.diff !== 0) { doc.setTextColor(180, 50, 50) } else { doc.setTextColor(0, 0, 0) }
-      doc.text(name, 22, y)
-      doc.text(String(r.system_qty), 115, y)
-      doc.text(String(r.actual_qty), 135, y)
+      doc.text(name, 22, y); doc.text(String(r.system_qty), 115, y); doc.text(String(r.actual_qty), 135, y)
       doc.text(r.diff === 0 ? '—' : (r.diff > 0 ? '+' : '') + String(r.diff), 158, y)
-      if (r.note) {
-        y += 5; doc.setFontSize(8); doc.setTextColor(120, 120, 120)
-        doc.text(`  Izoh: ${r.note}`, 22, y)
-        doc.setFontSize(9); doc.setTextColor(0, 0, 0)
-      }
+      if (r.note) { y += 5; doc.setFontSize(8); doc.setTextColor(120, 120, 120); doc.text(`  Izoh: ${r.note}`, 22, y); doc.setFontSize(9); doc.setTextColor(0, 0, 0) }
       doc.setTextColor(0, 0, 0); y += 7
     })
     const withDiff = reportRows.filter(r => r.diff !== 0)
@@ -344,8 +322,7 @@ export default function CashierPage() {
       withDiff.forEach(r => {
         if (y > 265) { doc.addPage(); y = 20 }
         const prod = products.find(p => p.id === r.product_id)
-        doc.setTextColor(180, 50, 50)
-        doc.text(`${prod?.name || ''}: ${r.diff > 0 ? '+' : ''}${r.diff} ta`, 25, y)
+        doc.setTextColor(180, 50, 50); doc.text(`${prod?.name || ''}: ${r.diff > 0 ? '+' : ''}${r.diff} ta`, 25, y)
         if (r.note) { doc.setTextColor(100, 100, 100); doc.text(`Izoh: ${r.note}`, 100, y) }
         doc.setTextColor(0, 0, 0); y += 7
       })
@@ -357,7 +334,6 @@ export default function CashierPage() {
     doc.save(`smena-hisobot-${sana}-${vaqt}.pdf`)
   }
 
-  // BILL
   const addBill = () => {
     if (!shift) { showToast('Avval smena oching!'); return }
     if (bills.length >= 5) { showToast('Maksimal 5 ta hisob!'); return }
@@ -384,14 +360,10 @@ export default function CashierPage() {
 
   const filteredProducts = activeCat === 'Barchasi'
     ? products
-    : products.filter(p => {
-        const cat = categories.find(c => c.name === activeCat)
-        return cat && p.category_id === cat.id
-      })
+    : products.filter(p => { const cat = categories.find(c => c.name === activeCat); return cat && p.category_id === cat.id })
 
   const filteredDebtors = debtors.filter(d =>
-    d.name.toLowerCase().includes(debtorSearch.toLowerCase()) ||
-    (d.phone || '').includes(debtorSearch)
+    d.name.toLowerCase().includes(debtorSearch.toLowerCase()) || (d.phone || '').includes(debtorSearch)
   )
 
   const addToCart = (product: Product) => {
@@ -441,7 +413,6 @@ export default function CashierPage() {
   const total = cart.reduce((s, i) => s + i.product.price * i.qty, 0)
   const cartQty = (id: string) => cart.find(i => i.product.id === id)?.qty || 0
 
-  // BUYURTMA
   const confirmOrder = async () => {
     if (cart.length === 0) return
     setLoading(true)
@@ -450,55 +421,40 @@ export default function CashierPage() {
 
     if (payType === 'qarz' && !selectedDebtorId && debtorName.trim()) {
       const { data: newDebtor } = await supabase.from('debtors')
-        .insert({ name: debtorName.trim(), phone: debtorPhone.trim(), total_debt: total })
-        .select().single()
+        .insert({ name: debtorName.trim(), phone: debtorPhone.trim(), total_debt: total }).select().single()
       if (newDebtor) { debtorId = newDebtor.id; setDebtors(prev => [...prev, newDebtor]) }
     } else if (payType === 'qarz' && selectedDebtorId) {
       const debtor = debtors.find(d => d.id === selectedDebtorId)
       if (debtor) {
-        await supabase.from('debtors')
-          .update({ total_debt: debtor.total_debt + total, updated_at: new Date().toISOString() })
-          .eq('id', selectedDebtorId)
-        setDebtors(prev => prev.map(d => d.id === selectedDebtorId
-          ? { ...d, total_debt: d.total_debt + total } : d))
+        await supabase.from('debtors').update({ total_debt: debtor.total_debt + total, updated_at: new Date().toISOString() }).eq('id', selectedDebtorId)
+        setDebtors(prev => prev.map(d => d.id === selectedDebtorId ? { ...d, total_debt: d.total_debt + total } : d))
       }
     }
 
     const actualPaid = moslashuvActual ?? total
     const paymentNote = moslashuvActual && moslashuvActual !== total
-      ? `Moslashuv: ${fmt(moslashuvActual)} so'm (farq: ${fmt(moslashuvActual - total)} so'm)`
-      : null
+      ? `Moslashuv: ${fmt(moslashuvActual)} so'm (farq: ${fmt(moslashuvActual - total)} so'm)` : null
 
     const { data: order, error } = await supabase.from('orders').insert({
       shift_id: shift?.id || null, worker_id: u.id,
       total: payType === 'ichki' ? 0 : total, pay_type: payType,
-      debtor_name: payType === 'qarz'
-        ? (debtorName || debtors.find(d => d.id === selectedDebtorId)?.name) : null,
+      debtor_name: payType === 'qarz' ? (debtorName || debtors.find(d => d.id === selectedDebtorId)?.name) : null,
       debtor_id: debtorId, debt_paid: payType !== 'qarz',
-      actual_paid: payType === 'ichki' ? 0 : actualPaid,
-      payment_note: paymentNote,
+      actual_paid: payType === 'ichki' ? 0 : actualPaid, payment_note: paymentNote,
     }).select().single()
 
     if (error || !order) { setLoading(false); return }
 
-    const items = cart.map(i => ({
-      order_id: order.id, product_id: i.product.id, qty: i.qty, price: i.product.price,
-    }))
+    const items = cart.map(i => ({ order_id: order.id, product_id: i.product.id, qty: i.qty, price: i.product.price }))
     await supabase.from('order_items').insert(items)
-    setOrderItems(prev => [...prev, ...items.map(i => ({
-      order_id: i.order_id, product_id: i.product_id, qty: i.qty
-    }))])
+    setOrderItems(prev => [...prev, ...items.map(i => ({ order_id: i.order_id, product_id: i.product_id, qty: i.qty }))])
 
     const hissaProducts = cart.filter(i => i.product.unit_type === 'hissa')
     if (hissaProducts.length > 0 && shift) {
       const totalAyirildi = hissaProducts.reduce((s, i) => s + i.product.hissa_per_unit * i.qty, 0)
       const newHissa = Math.max(0, (hissaStock[shift.id] || 0) - totalAyirildi)
-      const { data: existing } = await supabase.from('osh_stock').select('*')
-        .eq('shift_id', shift.id).eq('product_group', 'osh').maybeSingle()
-      if (existing) {
-        await supabase.from('osh_stock')
-          .update({ total_hissa: newHissa, updated_at: new Date().toISOString() }).eq('id', existing.id)
-      }
+      const { data: existing } = await supabase.from('osh_stock').select('*').eq('shift_id', shift.id).eq('product_group', 'osh').maybeSingle()
+      if (existing) await supabase.from('osh_stock').update({ total_hissa: newHissa, updated_at: new Date().toISOString() }).eq('id', existing.id)
       setHissaStock(prev => ({ ...prev, [shift.id]: newHissa }))
     }
 
@@ -508,60 +464,81 @@ export default function CashierPage() {
     showToast(`✅ Hisob ${activeBillId} tasdiqlandi!`)
   }
 
-  // KIRIM
   const confirmKirim = async () => {
     if (!selectedProd || !qty) return
     setLoading(true)
     const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
     const prod = products.find(p => p.id === selectedProd)
-    const savedQty = prod?.litr_per_unit
-      ? Math.floor(parseFloat(qty) / prod.litr_per_unit)
-      : parseFloat(qty)
+    const savedQty = prod?.litr_per_unit ? Math.floor(parseFloat(qty) / prod.litr_per_unit) : parseFloat(qty)
 
     const { data: newSi } = await supabase.from('stock_ins').insert({
-      shift_id: shift?.id || null, product_id: selectedProd,
-      qty: savedQty, worker_id: u.id,
+      shift_id: shift?.id || null, product_id: selectedProd, qty: savedQty, worker_id: u.id,
     }).select().single()
     if (newSi) setStockIns(prev => [...prev, newSi])
 
     if (prod?.unit_type === 'hissa' && shift) {
       const yangiHissa = Math.round(parseFloat(qty) * (prod.kg_to_hissa || 21))
       const newHissa = (hissaStock[shift.id] || 0) + yangiHissa
-      const { data: existing } = await supabase.from('osh_stock').select('*')
-        .eq('shift_id', shift.id).eq('product_group', 'osh').maybeSingle()
+      const { data: existing } = await supabase.from('osh_stock').select('*').eq('shift_id', shift.id).eq('product_group', 'osh').maybeSingle()
       if (existing) {
-        await supabase.from('osh_stock')
-          .update({ total_hissa: newHissa, updated_at: new Date().toISOString() }).eq('id', existing.id)
+        await supabase.from('osh_stock').update({ total_hissa: newHissa, updated_at: new Date().toISOString() }).eq('id', existing.id)
       } else {
-        await supabase.from('osh_stock')
-          .insert({ shift_id: shift.id, product_group: 'osh', total_hissa: newHissa })
+        await supabase.from('osh_stock').insert({ shift_id: shift.id, product_group: 'osh', total_hissa: newHissa })
       }
       setHissaStock(prev => ({ ...prev, [shift.id]: newHissa }))
     }
 
-    const toastMsg = prod?.litr_per_unit
-      ? `✅ ${parseFloat(qty)}L = ${savedQty} stakan kirim!`
-      : '✅ Kirim qilindi!'
-    setSelectedProd(''); setQty('')
-    setActiveModal(null); setLoading(false)
-    showToast(toastMsg)
+    const toastMsg = prod?.litr_per_unit ? `✅ ${parseFloat(qty)}L = ${savedQty} stakan kirim!` : '✅ Kirim qilindi!'
+    setSelectedProd(''); setQty(''); setActiveModal(null); setLoading(false); showToast(toastMsg)
   }
 
-  // CHIQIM
   const confirmChiqim = async () => {
     if (!selectedProd || !qty || !reason.trim()) return
     setLoading(true)
     const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
     const { data: newWo } = await supabase.from('write_offs').insert({
-      shift_id: shift?.id || null, product_id: selectedProd,
-      qty: parseInt(qty), reason: reason.trim(), worker_id: u.id,
+      shift_id: shift?.id || null, product_id: selectedProd, qty: parseInt(qty), reason: reason.trim(), worker_id: u.id,
     }).select().single()
-    if (newWo) setWriteOffs(prev => [...prev, {
-      id: newWo.id, product_id: newWo.product_id, qty: newWo.qty
-    }])
-    setSelectedProd(''); setQty(''); setReason('')
-    setActiveModal(null); setLoading(false)
+    if (newWo) setWriteOffs(prev => [...prev, { id: newWo.id, product_id: newWo.product_id, qty: newWo.qty }])
+    setSelectedProd(''); setQty(''); setReason(''); setActiveModal(null); setLoading(false)
     showToast('⚠️ Chiqim qilindi!')
+  }
+
+  // MENYU FUNKSIYALARI
+  const addCategory = async () => {
+    if (!newCatName.trim()) return
+    const { data } = await supabase.from('categories')
+      .insert({ name: newCatName.trim(), order_num: categories.length + 1 }).select().single()
+    if (data) { setCategories(p => [...p, data]); setNewCatName(''); showToast('✅ Kategoriya qo\'shildi!') }
+  }
+
+  const deleteCategory = async (id: string) => {
+    if (!window.confirm('Kategoriyani o\'chirasizmi?')) return
+    await supabase.from('categories').delete().eq('id', id)
+    setCategories(p => p.filter(c => c.id !== id))
+  }
+
+  const addProduct = async () => {
+    if (!newProdName.trim() || !newProdPrice || !newProdCat) return
+    const { data } = await supabase.from('products')
+      .insert({ name: newProdName.trim(), price: parseInt(newProdPrice), category_id: newProdCat, is_available: true })
+      .select().single()
+    if (data) {
+      setProducts(p => [...p, data])
+      setNewProdName(''); setNewProdPrice(''); setNewProdCat('')
+      showToast('✅ Mahsulot qo\'shildi!')
+    }
+  }
+
+  const deleteProduct = async (id: string) => {
+    if (!window.confirm('Mahsulotni o\'chirasizmi?')) return
+    await supabase.from('products').delete().eq('id', id)
+    setProducts(p => p.filter(x => x.id !== id))
+  }
+
+  const toggleAvail = async (p: Product) => {
+    await supabase.from('products').update({ is_available: !p.is_available }).eq('id', p.id)
+    setProducts(prev => prev.map(x => x.id === p.id ? { ...x, is_available: !x.is_available } : x))
   }
 
   return (
@@ -577,19 +554,24 @@ export default function CashierPage() {
             <Clock size={14}/>
           </button>
           {shift && <>
-            <button onClick={() => setActiveModal('kirим')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#F5C842', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}>
-              <PackagePlus size={13}/>
-            </button>
-            <button onClick={() => setActiveModal('chiqim')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#f87171', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}>
-              <PackageMinus size={13}/>
-            </button>
-            <button onClick={() => setActiveModal('debtors')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#fbbf24', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}>
-              <Search size={13}/>
-            </button>
-          </>}
-          <button onClick={() => { localStorage.removeItem('pos_user'); router.push('/') }} style={{width:'32px', height:'32px', borderRadius:'8px', border:'1px solid #4b5563', color:'#9ca3af', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', background:'transparent'}}>
-            <LogOut size={13}/>
-          </button>
+  <button onClick={() => setActiveModal('kirим')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#F5C842', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}>
+    <PackagePlus size={13}/>
+  </button>
+  <button onClick={() => setActiveModal('chiqim')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#f87171', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}>
+    <PackageMinus size={13}/>
+  </button>
+  <button onClick={() => setActiveModal('debtors')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#fbbf24', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}>
+    <Search size={13}/>
+  </button>
+</>}
+
+<button onClick={() => setShowMenu(true)} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#a78bfa', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}>
+  <UtensilsCrossed size={13}/>
+</button>
+
+<button onClick={() => { localStorage.removeItem('pos_user'); router.push('/') }} style={{width:'32px', height:'32px', borderRadius:'8px', border:'1px solid #4b5563', color:'#9ca3af', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', background:'transparent'}}>
+  <LogOut size={13}/>
+</button>
         </div>
       </div>
 
@@ -673,7 +655,7 @@ export default function CashierPage() {
         </div>
 
         {/* O'NG: SAVAT — FIXED */}
-        <div style={{position:'fixed', right:0, top:0, bottom:0, width:'38%', display:'flex', flexDirection:'column', backgroundColor:'white', zIndex:20, borderLeft:'1px solid #E0DDD5'}}>
+       <div style={{position:'fixed', right:0, top:'48px', bottom:0, width:'38%', display:'flex', flexDirection:'column', backgroundColor:'white', zIndex:20, borderLeft:'1px solid #E0DDD5'}}>
           <div className="flex items-center gap-1 px-2 pt-2 pb-0 border-b border-gray-100 overflow-x-auto flex-shrink-0">
             {bills.map(b => (
               <div key={b.id} onClick={() => setActiveBillId(b.id)}
@@ -685,15 +667,13 @@ export default function CashierPage() {
                   </span>
                 )}
                 {bills.length > 1 && (
-                  <button onClick={e => { e.stopPropagation(); removeBill(b.id) }}
-                    className="text-gray-300 hover:text-red-400 ml-0.5">
+                  <button onClick={e => { e.stopPropagation(); removeBill(b.id) }} className="text-gray-300 hover:text-red-400 ml-0.5">
                     <X size={12}/>
                   </button>
                 )}
               </div>
             ))}
-            <button onClick={addBill}
-              className="px-2 py-2 rounded-t-xl text-gray-400 hover:text-[#C8860A] hover:bg-[#FFF8E7] transition-all flex-shrink-0">
+            <button onClick={addBill} className="px-2 py-2 rounded-t-xl text-gray-400 hover:text-[#C8860A] hover:bg-[#FFF8E7] transition-all flex-shrink-0">
               <Plus size={16}/>
             </button>
           </div>
@@ -717,9 +697,7 @@ export default function CashierPage() {
                     <button onClick={() => changeQty(item.product.id, -1)}
                       className="w-7 h-7 rounded-lg border border-gray-200 bg-gray-50 font-bold flex items-center justify-center hover:border-[#C8860A] hover:text-[#C8860A] transition-all">−</button>
                     <input
-                      type="number"
-                      defaultValue={item.qty}
-                      min={1}
+                      type="number" defaultValue={item.qty} min={1}
                       onFocus={e => e.target.select()}
                       onBlur={e => {
                         const val = parseInt(e.target.value)
@@ -749,7 +727,6 @@ export default function CashierPage() {
               ))
             )}
           </div>
-          {/* PASTKI TUGMALAR — FIXED BOTTOM */}
           <div style={{padding:'12px 16px', borderTop:'2px solid #f3f4f6', flexShrink:0, backgroundColor:'white'}}>
             <div className="flex justify-between items-baseline mb-2">
               <span className="text-gray-500 font-bold text-sm">Jami:</span>
@@ -783,20 +760,14 @@ export default function CashierPage() {
                     <div className="flex-1 font-bold text-sm">{ps.name}</div>
                     <div className="text-xs text-gray-400 flex-shrink-0">O'tgan: <b>{ps.qty_original}</b></div>
                     <input type="number" value={ps.qty}
-                      onChange={e => setPrevStocks(prev => prev.map((x, j) =>
-                        j === i ? { ...x, qty: parseFloat(e.target.value) || 0 } : x
-                      ))}
+                      onChange={e => setPrevStocks(prev => prev.map((x, j) => j === i ? { ...x, qty: parseFloat(e.target.value) || 0 } : x))}
                       className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-center text-sm font-bold outline-none focus:border-[#C8860A]"/>
                   </div>
                   {ps.qty < ps.qty_original && (
-                    <div className="text-xs text-orange-500 font-bold mb-1">
-                      ⚠ {ps.qty_original - ps.qty} ta chiqindi sifatida yoziladi
-                    </div>
+                    <div className="text-xs text-orange-500 font-bold mb-1">⚠ {ps.qty_original - ps.qty} ta chiqindi sifatida yoziladi</div>
                   )}
                   <input type="text" placeholder="Izoh (ixtiyoriy)..." value={ps.note}
-                    onChange={e => setPrevStocks(prev => prev.map((x, j) =>
-                      j === i ? { ...x, note: e.target.value } : x
-                    ))}
+                    onChange={e => setPrevStocks(prev => prev.map((x, j) => j === i ? { ...x, note: e.target.value } : x))}
                     className="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs outline-none focus:border-[#C8860A]"/>
                 </div>
               ))}
@@ -828,20 +799,16 @@ export default function CashierPage() {
               <>
                 <div className="bg-green-50 border-2 border-green-400 rounded-xl p-4 mb-4">
                   <div className="font-black text-green-700">✅ Smena ochiq</div>
-                  <div className="text-sm text-gray-500 mt-1">
-                    Boshlangan: {new Date(shift.opened_at).toLocaleTimeString('uz-UZ', {hour:'2-digit', minute:'2-digit'})}
-                  </div>
+                  <div className="text-sm text-gray-500 mt-1">Boshlangan: {new Date(shift.opened_at).toLocaleTimeString('uz-UZ', {hour:'2-digit', minute:'2-digit'})}</div>
                 </div>
                 <button onClick={() => setActiveModal('close_shift')}
-                  className="w-full py-4 rounded-xl font-black text-base text-white"
-                  style={{backgroundColor: '#B83232'}}>
+                  className="w-full py-4 rounded-xl font-black text-base text-white" style={{backgroundColor: '#B83232'}}>
                   🔴 Smena yopish
                 </button>
               </>
             ) : (
               <button onClick={openShift} disabled={loading}
-                className="w-full py-4 rounded-xl font-black text-base text-white disabled:opacity-50"
-                style={{backgroundColor: '#1E7B47'}}>
+                className="w-full py-4 rounded-xl font-black text-base text-white disabled:opacity-50" style={{backgroundColor: '#1E7B47'}}>
                 {loading ? '...' : '🟢 Smena ochish'}
               </button>
             )}
@@ -858,9 +825,7 @@ export default function CashierPage() {
               <button onClick={() => setActiveModal('smena')} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">✕</button>
             </div>
             <div className="flex-1 overflow-y-auto p-4">
-              <div className="text-xs text-gray-400 mb-3 font-bold">
-                Har mahsulot uchun haqiqiy qoldiqni kiriting. Bo'sh qoldirsangiz — tizim hisobi qabul qilinadi.
-              </div>
+              <div className="text-xs text-gray-400 mb-3 font-bold">Har mahsulot uchun haqiqiy qoldiqni kiriting. Bo'sh qoldirsangiz — tizim hisobi qabul qilinadi.</div>
               {products.filter(p => p.is_available).map(p => {
                 const sysQty = getSystemQty(p)
                 const rep = shiftReport[p.id] || { actual: '', note: '' }
@@ -872,9 +837,7 @@ export default function CashierPage() {
                       <div className="flex-1 font-bold text-sm truncate">{p.name}</div>
                       <div className="text-xs text-gray-400 flex-shrink-0">Tizim: <b>{sysQty}</b></div>
                       <input type="number" placeholder={String(sysQty)} value={rep.actual}
-                        onChange={e => setShiftReport(prev => ({
-                          ...prev, [p.id]: { ...rep, actual: e.target.value }
-                        }))}
+                        onChange={e => setShiftReport(prev => ({ ...prev, [p.id]: { ...rep, actual: e.target.value } }))}
                         className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-center text-sm font-bold outline-none focus:border-[#C8860A] flex-shrink-0"/>
                     </div>
                     {rep.actual !== '' && diff !== 0 && (
@@ -883,9 +846,7 @@ export default function CashierPage() {
                           Farq: {diff > 0 ? '+' : ''}{diff} ta
                         </div>
                         <input type="text" placeholder="Izoh (majburiy)..." value={rep.note}
-                          onChange={e => setShiftReport(prev => ({
-                            ...prev, [p.id]: { ...rep, note: e.target.value }
-                          }))}
+                          onChange={e => setShiftReport(prev => ({ ...prev, [p.id]: { ...rep, note: e.target.value } }))}
                           className="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs outline-none focus:border-[#C8860A]"/>
                       </>
                     )}
@@ -895,8 +856,7 @@ export default function CashierPage() {
             </div>
             <div className="px-4 py-3 border-t border-gray-100 flex-shrink-0">
               <button onClick={closeShift} disabled={loading}
-                className="w-full py-3 rounded-xl font-black text-white text-sm disabled:opacity-50"
-                style={{backgroundColor: '#B83232'}}>
+                className="w-full py-3 rounded-xl font-black text-white text-sm disabled:opacity-50" style={{backgroundColor: '#B83232'}}>
                 {loading ? '...' : '✅ Tasdiqlash va smena yopish'}
               </button>
             </div>
@@ -932,8 +892,7 @@ export default function CashierPage() {
                 <div className="relative">
                   <Search size={14} className="absolute left-3 top-3 text-gray-400"/>
                   <input type="text" placeholder="Ism yoki telefon..."
-                    value={debtorSearch}
-                    onChange={e => { setDebtorSearch(e.target.value); setSelectedDebtorId('') }}
+                    value={debtorSearch} onChange={e => { setDebtorSearch(e.target.value); setSelectedDebtorId('') }}
                     className="w-full border border-gray-200 rounded-xl pl-9 pr-4 py-2.5 text-sm outline-none focus:border-[#C8860A]"/>
                 </div>
                 {debtorSearch && !selectedDebtorId && (
@@ -1058,9 +1017,7 @@ export default function CashierPage() {
                     <div className="bg-[#FFF8E7] border border-[#F5C842] rounded-xl px-4 py-3 text-sm mb-3 text-center">
                       <span className="font-bold text-[#C8860A]">{parseFloat(qty)} litr</span>
                       <span className="text-gray-500"> = </span>
-                      <span className="font-black text-green-600 text-lg">
-                        {Math.floor(parseFloat(qty) / prod.litr_per_unit)} stakan
-                      </span>
+                      <span className="font-black text-green-600 text-lg">{Math.floor(parseFloat(qty) / prod.litr_per_unit)} stakan</span>
                     </div>
                   )}
                 </div>
@@ -1132,11 +1089,90 @@ export default function CashierPage() {
                 </div>
               ) : filteredDebtors.map(d => (
                 <DebtorCard key={d.id} debtor={d} products={products}
-                  onUpdate={(id, newDebt) => {
-                    setDebtors(prev => prev.map(x => x.id === id ? { ...x, total_debt: newDebt } : x))
-                  }}
+                  onUpdate={(id, newDebt) => { setDebtors(prev => prev.map(x => x.id === id ? { ...x, total_debt: newDebt } : x)) }}
                 />
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MENYU BOSHQARUVI */}
+      {showMenu && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-lg flex flex-col" style={{maxHeight:'92vh'}}>
+            <div className="px-5 py-4 border-b border-gray-100 flex justify-between items-center flex-shrink-0">
+              <div className="font-black text-base">🍽 Menyu boshqaruvi</div>
+              <button onClick={() => setShowMenu(false)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">✕</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+
+              {/* Kategoriya qo'shish */}
+              <div className="bg-gray-50 rounded-xl p-3">
+                <div className="font-bold text-sm mb-2">Kategoriya qo'shish</div>
+                <div className="flex gap-2">
+                  <input value={newCatName} onChange={e => setNewCatName(e.target.value)}
+                    placeholder="Kategoriya nomi"
+                    className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-[#C8860A]"/>
+                  <button onClick={addCategory}
+                    style={{padding:'8px 16px', backgroundColor:'#C8860A', color:'#1A1208', borderRadius:'12px', fontWeight:900, fontSize:'14px', border:'none', cursor:'pointer'}}>+</button>
+                </div>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {categories.map(c => (
+                    <div key={c.id} style={{display:'flex', alignItems:'center', gap:'4px', backgroundColor:'#FFF8E7', border:'1px solid #F5C842', borderRadius:'999px', padding:'4px 12px'}}>
+                      <span style={{fontSize:'13px', fontWeight:700}}>{c.name}</span>
+                      <button onClick={() => deleteCategory(c.id)} style={{color:'#9ca3af', background:'none', border:'none', cursor:'pointer', fontSize:'12px'}}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Mahsulot qo'shish */}
+              <div className="bg-gray-50 rounded-xl p-3">
+                <div className="font-bold text-sm mb-2">Mahsulot qo'shish</div>
+                <div className="space-y-2">
+                  <input value={newProdName} onChange={e => setNewProdName(e.target.value)}
+                    placeholder="Mahsulot nomi"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-[#C8860A]"/>
+                  <div className="flex gap-2">
+                    <input value={newProdPrice} onChange={e => setNewProdPrice(e.target.value)}
+                      placeholder="Narxi" type="number"
+                      className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-[#C8860A]"/>
+                    <select value={newProdCat} onChange={e => setNewProdCat(e.target.value)}
+                      className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-[#C8860A] bg-white">
+                      <option value="">Kategoriya</option>
+                      {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                  <button onClick={addProduct}
+                    style={{width:'100%', padding:'10px', backgroundColor:'#C8860A', color:'#1A1208', borderRadius:'12px', fontWeight:900, fontSize:'14px', border:'none', cursor:'pointer'}}>
+                    ＋ Qo'shish
+                  </button>
+                </div>
+              </div>
+
+              {/* Mahsulotlar ro'yxati */}
+              <div className="bg-gray-50 rounded-xl overflow-hidden">
+                <div className="px-3 py-2 font-bold text-sm border-b border-gray-100 bg-white">
+                  Mahsulotlar ({products.length} ta)
+                </div>
+                {products.map(p => {
+                  const cat = categories.find(c => c.id === p.category_id)
+                  return (
+                    <div key={p.id} style={{display:'flex', alignItems:'center', gap:'10px', padding:'10px 12px', borderBottom:'1px solid #f3f4f6', backgroundColor:'white'}}>
+                      <div style={{flex:1, minWidth:0}}>
+                        <div style={{fontWeight:700, fontSize:'13px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{p.name}</div>
+                        <div style={{fontSize:'11px', color:'#9ca3af'}}>{cat?.name} · {fmt(p.price)} so'm</div>
+                      </div>
+                      <button onClick={() => toggleAvail(p)}
+                        style={{padding:'3px 8px', borderRadius:'999px', fontSize:'11px', fontWeight:700, border:'none', cursor:'pointer', flexShrink:0, backgroundColor: p.is_available ? '#dcfce7' : '#fee2e2', color: p.is_available ? '#15803d' : '#b91c1c'}}>
+                        {p.is_available ? 'Bor' : "Yo'q"}
+                      </button>
+                      <button onClick={() => deleteProduct(p.id)} style={{color:'#d1d5db', background:'none', border:'none', cursor:'pointer', fontSize:'16px', flexShrink:0}}>✕</button>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           </div>
         </div>
