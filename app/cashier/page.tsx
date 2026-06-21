@@ -346,10 +346,10 @@ export default function CashierPage() {
     setBills(prev => prev.map(b => b.id === activeBillId ? { ...b, cart: newCart } : b))
   }
 
-  const filteredProducts = activeCat === 'Barchasi'
-    ? products
-    : products.filter(p => { const cat = categories.find(c => c.name === activeCat); return cat && p.category_id === cat.id })
-
+  const filteredProducts = (activeCat === 'Barchasi'
+  ? products
+  : products.filter(p => { const cat = categories.find(c => c.name === activeCat); return cat && p.category_id === cat.id })
+).filter(p => p.is_available)
   const filteredDebtors = debtors.filter(d =>
     d.name.toLowerCase().includes(debtorSearch.toLowerCase()) || (d.phone || '').includes(debtorSearch)
   )
@@ -453,32 +453,43 @@ export default function CashierPage() {
   }
 
   const confirmKirim = async () => {
-    if (!selectedProd || !qty) return
-    setLoading(true)
-    const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
-    const prod = products.find(p => p.id === selectedProd)
-    const savedQty = prod?.litr_per_unit ? Math.floor(parseFloat(qty) / prod.litr_per_unit) : parseFloat(qty)
+  if (!selectedProd || !qty) return
+  setLoading(true)
+  const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
+  const prod = products.find(p => p.id === selectedProd)
+  const savedQty = prod?.litr_per_unit ? Math.floor(parseFloat(qty) / prod.litr_per_unit) : parseFloat(qty)
 
-    const { data: newSi } = await supabase.from('stock_ins').insert({
-      shift_id: shift?.id || null, product_id: selectedProd, qty: savedQty, worker_id: u.id,
-    }).select().single()
-    if (newSi) setStockIns(prev => [...prev, newSi])
+  const { data: newSi } = await supabase.from('stock_ins').insert({
+    shift_id: shift?.id || null, product_id: selectedProd, qty: savedQty, worker_id: u.id,
+  }).select().single()
+  if (newSi) setStockIns(prev => [...prev, newSi])
 
-    if (prod?.unit_type === 'hissa' && shift) {
-      const yangiHissa = Math.round(parseFloat(qty) * (prod.kg_to_hissa || 21))
-      const newHissa = (hissaStock[shift.id] || 0) + yangiHissa
-      const { data: existing } = await supabase.from('osh_stock').select('*').eq('shift_id', shift.id).eq('product_group', 'osh').maybeSingle()
-      if (existing) {
-        await supabase.from('osh_stock').update({ total_hissa: newHissa, updated_at: new Date().toISOString() }).eq('id', existing.id)
-      } else {
-        await supabase.from('osh_stock').insert({ shift_id: shift.id, product_group: 'osh', total_hissa: newHissa })
-      }
-      setHissaStock(prev => ({ ...prev, [shift.id]: newHissa }))
-    }
-
+  // Agar mahsulot "Yo'q" bo'lsa — avtomatik "Bor" qilamiz
+  if (prod && !prod.is_available) {
+    await supabase.from('products').update({ is_available: true }).eq('id', selectedProd)
+    setProducts(prev => prev.map(p => p.id === selectedProd ? { ...p, is_available: true } : p))
+    showToast(prod.litr_per_unit
+      ? `${parseFloat(qty)}L = ${savedQty} stakan kirim! Menuga qo'shildi.`
+      : `Kirim qilindi! "${prod.name}" menuga qo'shildi.`)
+  } else {
     const toastMsg = prod?.litr_per_unit ? `${parseFloat(qty)}L = ${savedQty} stakan kirim!` : 'Kirim qilindi!'
-    setSelectedProd(''); setQty(''); setActiveModal(null); setLoading(false); showToast(toastMsg)
+    showToast(toastMsg)
   }
+
+  if (prod?.unit_type === 'hissa' && shift) {
+    const yangiHissa = Math.round(parseFloat(qty) * (prod.kg_to_hissa || 21))
+    const newHissa = (hissaStock[shift.id] || 0) + yangiHissa
+    const { data: existing } = await supabase.from('osh_stock').select('*').eq('shift_id', shift.id).eq('product_group', 'osh').maybeSingle()
+    if (existing) {
+      await supabase.from('osh_stock').update({ total_hissa: newHissa, updated_at: new Date().toISOString() }).eq('id', existing.id)
+    } else {
+      await supabase.from('osh_stock').insert({ shift_id: shift.id, product_group: 'osh', total_hissa: newHissa })
+    }
+    setHissaStock(prev => ({ ...prev, [shift.id]: newHissa }))
+  }
+
+  setSelectedProd(''); setQty(''); setActiveModal(null); setLoading(false)
+}
 
   const confirmChiqim = async () => {
   if (!selectedProd || !qty || !reason.trim()) return

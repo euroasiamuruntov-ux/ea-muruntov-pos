@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import jsPDF from 'jspdf'
-import { Clock, UtensilsCrossed, Users, BarChart3, LogOut, PackagePlus, PackageMinus, Search } from 'lucide-react'
+import { Clock, UtensilsCrossed, Users, BarChart3, LogOut, PackagePlus, PackageMinus, Search, Calendar } from 'lucide-react'
 import DebtorCard from '../cashier/components/DebtorCard'
 
 type User = { id: string; name: string; role: string }
@@ -27,6 +27,7 @@ type ShiftSummary = {
   click_revenue: number; card_revenue: number; debt_revenue: number; ichki_count: number
 }
 type ShiftReportData = { mahsulot: any[]; izohlar: any[] }
+type DateFilter = 'bugun' | 'hafta' | 'oy' | 'custom'
 
 type Tab = 'hisobot' | 'tarix' | 'qarzdorlar' | 'mahsulot' | 'xodim'
 
@@ -50,6 +51,12 @@ export default function AdminPage() {
   const [selectedShiftId, setSelectedShiftId] = useState<string | null>(null)
   const [shiftReports, setShiftReports] = useState<{[shiftId: string]: ShiftReportData}>({})
 
+  // Tarix filtrlari
+  const [dateFilter, setDateFilter] = useState<DateFilter>('bugun')
+  const [customFrom, setCustomFrom] = useState('')
+  const [customTo, setCustomTo] = useState('')
+  const [filteredHistory, setFilteredHistory] = useState<ShiftSummary[]>([])
+
   const [newCatName, setNewCatName] = useState('')
   const [newProdName, setNewProdName] = useState('')
   const [newProdPrice, setNewProdPrice] = useState('')
@@ -66,6 +73,36 @@ export default function AdminPage() {
     setUser(parsed)
     loadAll()
   }, [])
+
+  // Filter o'zgarganda filteredHistory yangilanadi
+  useEffect(() => {
+    applyFilter(shiftHistory, dateFilter, customFrom, customTo)
+  }, [shiftHistory, dateFilter, customFrom, customTo])
+
+  const applyFilter = (history: ShiftSummary[], filter: DateFilter, from: string, to: string) => {
+    const now = new Date()
+    let fromDate: Date
+    let toDate: Date = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59)
+
+    if (filter === 'bugun') {
+      fromDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0)
+    } else if (filter === 'hafta') {
+      const day = now.getDay() === 0 ? 6 : now.getDay() - 1
+      fromDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day, 0, 0, 0)
+    } else if (filter === 'oy') {
+      fromDate = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0)
+    } else {
+      if (!from) { setFilteredHistory(history); return }
+      fromDate = new Date(from + 'T00:00:00')
+      toDate = to ? new Date(to + 'T23:59:59') : toDate
+    }
+
+    const filtered = history.filter(s => {
+      const d = new Date(s.opened_at)
+      return d >= fromDate && d <= toDate
+    })
+    setFilteredHistory(filtered)
+  }
 
   const loadAll = async () => {
     const [
@@ -84,7 +121,7 @@ export default function AdminPage() {
       supabase.from('write_offs').select('*').order('created_at', { ascending: false }),
       supabase.from('stock_ins').select('*').order('created_at', { ascending: false }),
       supabase.from('debtors').select('*').order('name'),
-      supabase.from('shift_summary').select('*').order('opened_at', { ascending: false }).limit(30),
+      supabase.from('shift_summary').select('*').order('opened_at', { ascending: false }),
     ])
     setCategories(cats || [])
     setProducts(prods || [])
@@ -131,7 +168,6 @@ export default function AdminPage() {
       orderItemsData = oi || []
     }
 
-    // Mahsulot hisoboti
     const enriched = (report || []).map((r: any) => {
       const prod = products.find((p: any) => p.id === r.product_id)
       const initial = stockData?.find((s: any) => s.product_id === r.product_id)?.initial_qty || 0
@@ -154,57 +190,22 @@ export default function AdminPage() {
       return { ...r, initial: realInitial, kirim, sotildi, chiqim: totalChiqim, qoldiq }
     }).filter((r: any) => r.initial > 0 || r.kirim > 0 || r.sotildi > 0 || r.chiqim > 0)
 
-    // Izohlar yigamiz
     const izohlar: any[] = []
-
-    // 1. Oddiy chiqimlar
     ;(woData || []).filter((w: any) => w.reason !== 'Smena boshida chiqindi').forEach((w: any) => {
-      izohlar.push({
-        type: 'chiqim',
-        text: `${w.products?.name || '—'} — ${w.qty} ta chiqim`,
-        izoh: w.reason,
-        xodim: w.users?.name || '—',
-        vaqt: w.created_at,
-      })
+      izohlar.push({ type: 'chiqim', text: `${w.products?.name || '—'} — ${w.qty} ta chiqim`, izoh: w.reason, xodim: w.users?.name || '—', vaqt: w.created_at })
     })
-
-    // 2. Smena boshi chiqindilari
     ;(woData || []).filter((w: any) => w.reason === 'Smena boshida chiqindi').forEach((w: any) => {
-      izohlar.push({
-        type: 'smena_chiqim',
-        text: `${w.products?.name || '—'} — ${w.qty} ta`,
-        izoh: 'Smena boshida chiqindi',
-        xodim: w.users?.name || '—',
-        vaqt: w.created_at,
-      })
+      izohlar.push({ type: 'smena_chiqim', text: `${w.products?.name || '—'} — ${w.qty} ta`, izoh: 'Smena boshida chiqindi', xodim: w.users?.name || '—', vaqt: w.created_at })
     })
-
-    // 3. Ichki istemol
     ;(ichkiOrds || []).forEach((o: any) => {
       const items = orderItemsData.filter((oi: any) => oi.order_id === o.id)
       if (items.length > 0) {
-        izohlar.push({
-          type: 'ichki',
-          text: items.map((i: any) => `${i.products?.name || '—'} x${i.qty}`).join(', '),
-          izoh: "Xodim ichki iste'mol",
-          xodim: workers.find(w => w.id === o.worker_id)?.name || '—',
-          vaqt: o.created_at,
-        })
+        izohlar.push({ type: 'ichki', text: items.map((i: any) => `${i.products?.name || '—'} x${i.qty}`).join(', '), izoh: "Xodim ichki iste'mol", xodim: workers.find(w => w.id === o.worker_id)?.name || '—', vaqt: o.created_at })
       }
     })
-
-    // 4. Smena yopish farqlari izohli
     ;(report || []).filter((r: any) => r.diff !== 0 && r.note).forEach((r: any) => {
-      izohlar.push({
-        type: 'farq',
-        text: `${r.products?.name || '—'} — farq: ${r.diff > 0 ? '+' : ''}${r.diff} ta`,
-        izoh: r.note,
-        xodim: '—',
-        vaqt: null,
-      })
+      izohlar.push({ type: 'farq', text: `${r.products?.name || '—'} — farq: ${r.diff > 0 ? '+' : ''}${r.diff} ta`, izoh: r.note, xodim: '—', vaqt: null })
     })
-
-    // Vaqt boyicha saralash
     izohlar.sort((a, b) => {
       if (!a.vaqt) return 1
       if (!b.vaqt) return -1
@@ -229,31 +230,26 @@ export default function AdminPage() {
     const { data } = await supabase.from('categories').insert({ name: newCatName.trim(), order_num: categories.length + 1 }).select().single()
     if (data) { setCategories(p => [...p, data]); setNewCatName(''); showToast('Kategoriya qoshildi!') }
   }
-
   const deleteCategory = async (id: string) => {
     if (!window.confirm('Kategoriyani ochirasizmi?')) return
     await supabase.from('categories').delete().eq('id', id)
     setCategories(p => p.filter(c => c.id !== id))
   }
-
   const addProduct = async () => {
     if (!newProdName.trim() || !newProdPrice || !newProdCat) return
     const { data } = await supabase.from('products').insert({ name: newProdName.trim(), price: parseInt(newProdPrice), category_id: newProdCat, is_available: true }).select().single()
     if (data) { setProducts(p => [...p, data]); setNewProdName(''); setNewProdPrice(''); setNewProdCat(''); showToast('Mahsulot qoshildi!') }
   }
-
   const deleteProduct = async (id: string) => {
     if (!window.confirm('Mahsulotni ochirasizmi?')) return
     await supabase.from('products').delete().eq('id', id)
     setProducts(p => p.filter(x => x.id !== id))
   }
-
   const addWorker = async () => {
     if (!newWorkerName.trim() || newWorkerPin.length !== 4) return
     const { data } = await supabase.from('users').insert({ name: newWorkerName.trim(), pin: newWorkerPin, role: 'worker' }).select().single()
     if (data) { setWorkers(p => [...p, data]); setNewWorkerName(''); setNewWorkerPin(''); showToast('Xodim qoshildi!') }
   }
-
   const deleteWorker = async (id: string) => {
     if (!window.confirm('Xodimni ochirasizmi?')) return
     await supabase.from('users').delete().eq('id', id)
@@ -268,7 +264,6 @@ export default function AdminPage() {
   const clickRev = shiftOrders.reduce((s, o) => s + (o.pay_type === 'click' ? (o.actual_paid ?? o.total) : 0), 0)
   const debtRev = shiftOrders.reduce((s, o) => s + (o.pay_type === 'qarz' ? o.total : 0), 0)
   const ichkiOrders = shiftOrders.filter(o => o.pay_type === 'ichki')
-  const activeDebts = shiftOrders.filter(o => o.pay_type === 'qarz' && !o.debt_paid)
   const moslashuvOrders = shiftOrders.filter(o => o.payment_note)
 
   const soldByProduct = products.map(p => {
@@ -281,23 +276,28 @@ export default function AdminPage() {
     const realInitial = (stock?.initial_qty || 0) + smenaChiqim
     const totalChiqim = smenaChiqim + oddiyChiqim
     if (p.unit_type === 'hissa') {
-      const hissaPerUnit = p.hissa_per_unit || 3
-      const remaining = Math.floor(oshHissa / hissaPerUnit)
+      const remaining = Math.floor(oshHissa / (p.hissa_per_unit || 3))
       return { ...p, sold, writeOff: totalChiqim, stockIn, remaining, initial: realInitial }
     }
     const remaining = realInitial + stockIn - sold - totalChiqim
     return { ...p, sold, writeOff: totalChiqim, stockIn, remaining, initial: realInitial }
   }).filter(p => p.sold > 0 || p.writeOff > 0 || p.stockIn > 0 || p.initial > 0)
 
-  const payDebt = async (orderId: string) => {
-    await supabase.from('orders').update({ debt_paid: true }).eq('id', orderId)
-    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, debt_paid: true } : o))
-    showToast('Qarz yopildi!')
-  }
-
   const filteredDebtors = debtors.filter(d =>
     d.name.toLowerCase().includes(debtorSearch.toLowerCase()) || (d.phone || '').includes(debtorSearch)
   )
+
+  // Davriy statistika (filteredHistory asosida)
+  const periodStats = {
+    smenaCount: filteredHistory.length,
+    totalRev: filteredHistory.reduce((s, h) => s + h.total_revenue, 0),
+    cashRev: filteredHistory.reduce((s, h) => s + h.cash_revenue, 0),
+    clickRev: filteredHistory.reduce((s, h) => s + h.click_revenue, 0),
+    cardRev: filteredHistory.reduce((s, h) => s + h.card_revenue, 0),
+    debtRev: filteredHistory.reduce((s, h) => s + h.debt_revenue, 0),
+    orderCount: filteredHistory.reduce((s, h) => s + h.order_count, 0),
+    ichkiCount: filteredHistory.reduce((s, h) => s + h.ichki_count, 0),
+  }
 
   const generatePDF = () => {
     const doc = new jsPDF()
@@ -312,7 +312,6 @@ export default function AdminPage() {
     doc.setFontSize(10); doc.setFont('helvetica', 'normal')
     const stats = [
       ['Jami buyurtmalar:', `${shiftOrders.length} ta`],
-      ['Jami narx:', `${fmt(totalRev)} som`],
       ['Haqiqiy tushum:', `${fmt(actualRev)} som`],
       ['Naqd:', `${fmt(cashRev)} som`],
       ['Click:', `${fmt(clickRev)} som`],
@@ -346,6 +345,13 @@ export default function AdminPage() {
     { id: 'qarzdorlar', label: 'Qarzlar', icon: <Search size={20}/> },
     { id: 'mahsulot', label: 'Menyu', icon: <UtensilsCrossed size={20}/> },
     { id: 'xodim', label: 'Xodim', icon: <Users size={20}/> },
+  ]
+
+  const filterBtns: { id: DateFilter; label: string }[] = [
+    { id: 'bugun', label: 'Bugun' },
+    { id: 'hafta', label: 'Hafta' },
+    { id: 'oy', label: 'Oy' },
+    { id: 'custom', label: 'Muddat' },
   ]
 
   return (
@@ -402,7 +408,6 @@ export default function AdminPage() {
                 { label: 'Karta', val: fmt(cardRev) + ' som', color: '#2563eb' },
                 { label: 'Qarz', val: fmt(debtRev) + ' som', color: '#B83232' },
                 { label: 'Ichki', val: ichkiOrders.length + ' ta', color: '#f97316' },
-                { label: 'Faol qarzlar', val: activeDebts.length + ' ta', color: '#B83232' },
               ].map((s, i) => (
                 <div key={i} style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', padding:'16px'}}>
                   <div style={{fontSize:'12px', color:'#9ca3af', fontWeight:700, marginBottom:'4px'}}>{s.label}</div>
@@ -531,24 +536,6 @@ export default function AdminPage() {
               </div>
             )}
 
-            {activeDebts.length > 0 && (
-              <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
-                <div style={{padding:'12px 16px', borderBottom:'1px solid #f3f4f6', fontWeight:900, fontSize:'14px', color:'#B83232'}}>Faol qarzlar</div>
-                {activeDebts.map(o => (
-                  <div key={o.id} style={{display:'flex', alignItems:'center', gap:'12px', padding:'12px 16px', borderBottom:'1px solid #f9fafb'}}>
-                    <div style={{flex:1, fontSize:'14px'}}>
-                      <div style={{fontWeight:700}}>{o.debtor_name || "Noma'lum"}</div>
-                      <div style={{fontSize:'12px', color:'#9ca3af'}}>{fmt(o.total)} som</div>
-                    </div>
-                    <button onClick={() => payDebt(o.id)}
-                      style={{padding:'6px 12px', backgroundColor:'#1E7B47', color:'white', borderRadius:'12px', fontSize:'12px', fontWeight:900, border:'none', cursor:'pointer'}}>
-                      Tolandi
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
             <button onClick={generatePDF}
               style={{width:'100%', padding:'16px', backgroundColor:'#1A1208', color:'#F5C842', borderRadius:'16px', fontWeight:900, fontSize:'14px', border:'none', cursor:'pointer'}}>
               PDF hisobot yuklab olish
@@ -559,13 +546,66 @@ export default function AdminPage() {
         {/* SMENA TARIXI */}
         {activeTab === 'tarix' && (
           <div style={{display:'flex', flexDirection:'column', gap:'12px'}}>
-            <div style={{fontSize:'12px', color:'#9ca3af', fontWeight:700}}>Oxirgi 30 ta smena</div>
-            {shiftHistory.length === 0 ? (
+
+            {/* FILTR TUGMALARI */}
+            <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', padding:'12px', display:'flex', flexDirection:'column', gap:'10px'}}>
+              <div style={{display:'flex', gap:'6px'}}>
+                {filterBtns.map(f => (
+                  <button key={f.id} onClick={() => setDateFilter(f.id)}
+                    style={{flex:1, padding:'8px 4px', borderRadius:'10px', fontSize:'12px', fontWeight:700, border:'none', cursor:'pointer',
+                      backgroundColor: dateFilter === f.id ? '#C8860A' : '#f3f4f6',
+                      color: dateFilter === f.id ? '#1A1208' : '#6b7280'}}>
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+              {dateFilter === 'custom' && (
+                <div style={{display:'flex', gap:'8px', alignItems:'center'}}>
+                  <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
+                    style={{flex:1, border:'1px solid #e5e7eb', borderRadius:'10px', padding:'8px 10px', fontSize:'13px', outline:'none'}}/>
+                  <span style={{color:'#9ca3af', fontSize:'12px'}}>—</span>
+                  <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)}
+                    style={{flex:1, border:'1px solid #e5e7eb', borderRadius:'10px', padding:'8px 10px', fontSize:'13px', outline:'none'}}/>
+                </div>
+              )}
+            </div>
+
+            {/* DAVRIY STATISTIKA */}
+            {filteredHistory.length > 0 && (
+              <div style={{backgroundColor:'#1A1208', borderRadius:'16px', padding:'16px', display:'flex', flexDirection:'column', gap:'12px'}}>
+                <div style={{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+                  <div style={{color:'#F5C842', fontWeight:900, fontSize:'14px', display:'flex', alignItems:'center', gap:'6px'}}>
+                    <Calendar size={14}/> Davriy hisobot
+                  </div>
+                  <div style={{color:'#6b7280', fontSize:'11px'}}>{filteredHistory.length} ta smena</div>
+                </div>
+                <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px'}}>
+                  {[
+                    { label: 'Jami tushum', val: fmt(periodStats.totalRev) + ' som', color: '#F5C842' },
+                    { label: 'Buyurtmalar', val: periodStats.orderCount + ' ta', color: '#a3e635' },
+                    { label: 'Naqd', val: fmt(periodStats.cashRev) + ' som', color: '#4ade80' },
+                    { label: 'Click', val: fmt(periodStats.clickRev) + ' som', color: '#c084fc' },
+                    { label: 'Karta', val: fmt(periodStats.cardRev) + ' som', color: '#60a5fa' },
+                    { label: 'Qarz', val: fmt(periodStats.debtRev) + ' som', color: '#f87171' },
+                    { label: 'Ichki', val: periodStats.ichkiCount + ' ta', color: '#fb923c' },
+                    { label: 'Smenalar', val: periodStats.smenaCount + ' ta', color: '#94a3b8' },
+                  ].map((s, i) => (
+                    <div key={i} style={{backgroundColor:'rgba(255,255,255,0.07)', borderRadius:'12px', padding:'10px'}}>
+                      <div style={{fontSize:'11px', color:'#6b7280', marginBottom:'3px'}}>{s.label}</div>
+                      <div style={{fontWeight:900, fontSize:'15px', color:s.color}}>{s.val}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* SMENA RO'YXATI */}
+            {filteredHistory.length === 0 ? (
               <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', padding:'32px', textAlign:'center', color:'#d1d5db'}}>
                 <div style={{fontSize:'32px', marginBottom:'8px'}}>📋</div>
-                <div style={{fontSize:'14px', fontWeight:700}}>Smena tarixi yoq</div>
+                <div style={{fontSize:'14px', fontWeight:700}}>Bu davrda smena yoq</div>
               </div>
-            ) : shiftHistory.map(s => {
+            ) : filteredHistory.map(s => {
               const isSelected = selectedShiftId === s.id
               const reportData = shiftReports[s.id]
               const report = reportData?.mahsulot || []
@@ -602,7 +642,6 @@ export default function AdminPage() {
 
                   {isSelected && (
                     <div style={{borderTop:'1px solid #f3f4f6', padding:'12px 16px', backgroundColor:'#f9fafb', display:'flex', flexDirection:'column', gap:'12px'}}>
-                      {/* Moliyaviy kartochkalar */}
                       <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px'}}>
                         {[
                           { label: 'Jami tushum', val: fmt(s.total_revenue) + ' som', color: '#C8860A' },
@@ -620,7 +659,6 @@ export default function AdminPage() {
                         ))}
                       </div>
 
-                      {/* Mahsulot hisoboti */}
                       {report.length > 0 ? (
                         <div style={{backgroundColor:'white', borderRadius:'12px', overflow:'hidden'}}>
                           <div style={{padding:'8px 12px', borderBottom:'1px solid #f3f4f6', fontWeight:900, fontSize:'12px', color:'#6b7280'}}>Mahsulot hisoboti</div>
@@ -661,7 +699,6 @@ export default function AdminPage() {
                         </div>
                       )}
 
-                      {/* IZOHLAR */}
                       {izohlar.length > 0 && (
                         <div style={{backgroundColor:'white', borderRadius:'12px', overflow:'hidden'}}>
                           <div style={{padding:'8px 12px', borderBottom:'1px solid #f3f4f6', fontWeight:900, fontSize:'12px', color:'#6b7280'}}>
@@ -684,7 +721,6 @@ export default function AdminPage() {
                           ))}
                         </div>
                       )}
-
                     </div>
                   )}
                 </div>
@@ -737,7 +773,6 @@ export default function AdminPage() {
                 ))}
               </div>
             </div>
-
             <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', padding:'16px'}}>
               <div style={{fontWeight:900, fontSize:'14px', marginBottom:'12px'}}>Mahsulot qoshish</div>
               <div style={{display:'flex', flexDirection:'column', gap:'8px'}}>
@@ -758,7 +793,6 @@ export default function AdminPage() {
                 </button>
               </div>
             </div>
-
             <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
               <div style={{padding:'12px 16px', borderBottom:'1px solid #f3f4f6', fontWeight:900, fontSize:'14px'}}>Mahsulotlar ({products.length} ta)</div>
               {products.map(p => {
@@ -797,7 +831,6 @@ export default function AdminPage() {
                 </button>
               </div>
             </div>
-
             <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
               <div style={{padding:'12px 16px', borderBottom:'1px solid #f3f4f6', fontWeight:900, fontSize:'14px'}}>Xodimlar ({workers.length} ta)</div>
               {workers.map(w => (
