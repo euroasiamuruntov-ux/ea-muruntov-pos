@@ -481,16 +481,34 @@ export default function CashierPage() {
   }
 
   const confirmChiqim = async () => {
-    if (!selectedProd || !qty || !reason.trim()) return
-    setLoading(true)
-    const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
-    const { data: newWo } = await supabase.from('write_offs').insert({
-      shift_id: shift?.id || null, product_id: selectedProd, qty: parseInt(qty), reason: reason.trim(), worker_id: u.id,
-    }).select().single()
-    if (newWo) setWriteOffs(prev => [...prev, { id: newWo.id, product_id: newWo.product_id, qty: newWo.qty }])
-    setSelectedProd(''); setQty(''); setReason(''); setActiveModal(null); setLoading(false)
-    showToast('Chiqim qilindi!')
+  if (!selectedProd || !qty || !reason.trim()) return
+  setLoading(true)
+  const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
+  const prod = products.find(p => p.id === selectedProd)
+
+  const { data: newWo } = await supabase.from('write_offs').insert({
+    shift_id: shift?.id || null, product_id: selectedProd,
+    qty: parseInt(qty), reason: reason.trim(), worker_id: u.id,
+  }).select().single()
+  if (newWo) setWriteOffs(prev => [...prev, { id: newWo.id, product_id: newWo.product_id, qty: newWo.qty }])
+
+  // Osh uchun hissani ham ayiramiz
+  if (prod?.unit_type === 'hissa' && shift) {
+    const ayirilganHissa = parseInt(qty) * (prod.hissa_per_unit || 3)
+    const newHissa = Math.max(0, (hissaStock[shift.id] || 0) - ayirilganHissa)
+    const { data: existing } = await supabase.from('osh_stock').select('*')
+      .eq('shift_id', shift.id).eq('product_group', 'osh').maybeSingle()
+    if (existing) {
+      await supabase.from('osh_stock')
+        .update({ total_hissa: newHissa, updated_at: new Date().toISOString() }).eq('id', existing.id)
+    }
+    setHissaStock(prev => ({ ...prev, [shift.id]: newHissa }))
   }
+
+  setSelectedProd(''); setQty(''); setReason('')
+  setActiveModal(null); setLoading(false)
+  showToast('Chiqim qilindi!')
+}
 
   const addCategory = async () => {
     if (!newCatName.trim()) return
