@@ -104,9 +104,15 @@ export default function CashierPage() {
     setProducts(prods || [])
     setDebtors(dbtrs || [])
 
-    const { data: shiftData } = await supabase.from('shifts').select('*').eq('is_open', true).maybeSingle()
-    setShift(shiftData || null)
+    const { data: shiftData } = await supabase
+  .from('shifts')
+  .select('*')
+  .eq('is_open', true)
+  .order('opened_at', { ascending: false })
+  .limit(1)
+  .maybeSingle()
 
+  setShift(shiftData || null) 
     if (shiftData?.id) {
       const { data: oshStock } = await supabase.from('osh_stock').select('*').eq('shift_id', shiftData.id).maybeSingle()
       if (oshStock) setHissaStock({ [shiftData.id]: oshStock.total_hissa })
@@ -166,17 +172,47 @@ export default function CashierPage() {
   }
 
   const openShift = async () => {
-    setLoading(true)
-    const { data: lastShift } = await supabase.from('shifts').select('id').eq('is_open', false).order('closed_at', { ascending: false }).limit(1).maybeSingle()
-    if (lastShift?.id) {
-      const { data: lastReport } = await supabase.from('shift_reports').select('*, products(name)').eq('shift_id', lastShift.id).gt('actual_qty', 0)
-      if (lastReport && lastReport.length > 0) {
-        const prevList: PrevStock[] = lastReport.map((r: any) => ({ product_id: r.product_id, name: r.products?.name || '', qty: r.actual_qty, qty_original: r.actual_qty, note: '' }))
-        setPrevStocks(prevList); setLoading(false); setActiveModal('shift_start'); return
-      }
-    }
-    await doOpenShift()
+  setLoading(true)
+
+  // Avval ochiq smena bormi — tekshiramiz
+  const { data: existingOpen } = await supabase
+    .from('shifts')
+    .select('*')
+    .eq('is_open', true)
+    .order('opened_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (existingOpen) {
+    // Ochiq smena bor — uni ishlatamiz
+    setShift(existingOpen)
+    showToast('Mavjud smena topildi!')
+    setLoading(false)
+    await loadData()
+    return
   }
+
+  // Yopiq oxirgi smenaning qoldig'ini olamiz
+  const { data: lastShift } = await supabase
+    .from('shifts').select('id')
+    .eq('is_open', false)
+    .order('closed_at', { ascending: false })
+    .limit(1).maybeSingle()
+
+  if (lastShift?.id) {
+    const { data: lastReport } = await supabase
+      .from('shift_reports').select('*, products(name)')
+      .eq('shift_id', lastShift.id).gt('actual_qty', 0)
+    if (lastReport && lastReport.length > 0) {
+      const prevList: PrevStock[] = lastReport.map((r: any) => ({
+        product_id: r.product_id, name: r.products?.name || '',
+        qty: r.actual_qty, qty_original: r.actual_qty, note: ''
+      }))
+      setPrevStocks(prevList); setLoading(false); setActiveModal('shift_start'); return
+    }
+  }
+  await doOpenShift()
+}
 
   const doOpenShift = async (customPrevStocks?: PrevStock[]) => {
     setLoading(true)
