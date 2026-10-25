@@ -5,12 +5,14 @@ import { supabase } from '@/lib/supabase'
 import jsPDF from 'jspdf'
 import { Clock, UtensilsCrossed, Users, BarChart3, LogOut, PackagePlus, PackageMinus, Search, Calendar } from 'lucide-react'
 import DebtorCard from '../cashier/components/DebtorCard'
+import { STOCK_MODES, stockModeOf, type StockMode } from '@/lib/stock'
 
 type User = { id: string; name: string; role: string }
 type Category = { id: string; name: string; order_num: number }
 type Product = {
   id: string; name: string; price: number; category_id: string; is_available: boolean
   unit_type?: string; kg_to_hissa?: number; hissa_per_unit?: number
+  stock_mode?: StockMode; is_unlimited?: boolean
 }
 type Shift = { id: string; is_open: boolean; opened_at: string; closed_at?: string; opened_by?: string; closed_by?: string }
 type ShiftStock = { product_id: string; initial_qty: number }
@@ -18,7 +20,7 @@ type Order = { id: string; total: number; pay_type: string; debt_paid: boolean; 
 type OrderItem = { order_id: string; product_id: string; qty: number; price: number }
 type Worker = { id: string; name: string; pin: string; role: string }
 type WriteOff = { id: string; product_id: string; qty: number; reason: string; worker_id: string; created_at: string }
-type StockIn = { id: string; product_id: string; qty: number; worker_id: string; created_at: string }
+type StockIn = { id: string; product_id: string; qty: number; worker_id: string; created_at: string; source?: string; note?: string | null }
 type Debtor = { id: string; name: string; phone: string; total_debt: number }
 type ShiftSummary = {
   id: string; opened_at: string; closed_at: string | null; is_open: boolean
@@ -197,6 +199,10 @@ export default function AdminPage() {
     ;(woData || []).filter((w: any) => w.reason === 'Smena boshida chiqindi').forEach((w: any) => {
       izohlar.push({ type: 'smena_chiqim', text: `${w.products?.name || '—'} — ${w.qty} ta`, izoh: 'Smena boshida chiqindi', xodim: w.users?.name || '—', vaqt: w.created_at })
     })
+    ;((siData || []) as StockIn[]).filter(si => si.source === 'auto_extra').forEach(si => {
+      const prod = products.find(p => p.id === si.product_id)
+      izohlar.push({ type: 'avto_kirim', text: `${prod?.name || '—'} — +${toPortions(prod, si.qty, 'ceil')} ta qo'shimcha tayyorlangan`, izoh: si.note || 'Sotuv paytida tizimda yetmadi (avto-kirim)', xodim: workers.find(w => w.id === si.worker_id)?.name || '—', vaqt: si.created_at })
+    })
     ;(ichkiOrds || []).forEach((o: any) => {
       const items = orderItemsData.filter((oi: any) => oi.order_id === o.id)
       if (items.length > 0) {
@@ -219,6 +225,22 @@ export default function AdminPage() {
   const fmt = (n: number) => n.toLocaleString('uz-UZ')
   const workerName = (id: string) => workers.find(w => w.id === id)?.name || 'Noma\'lum'
   const productName = (id: string) => products.find(p => p.id === id)?.name || 'Noma\'lum'
+
+  // Osh kirimi kg bilan yoziladi, hisobotda esa porsiya ko'rsatiladi (avto-kirim yuqoriga yaxlitlanadi)
+  const toPortions = (p: Product | undefined, qty: number, round: 'floor' | 'ceil' = 'floor') => {
+    if (p?.unit_type !== 'hissa') return qty
+    const hissa = Math.round(qty * (p.kg_to_hissa || 21))
+    const portions = hissa / (p.hissa_per_unit || 3)
+    return round === 'ceil' ? Math.ceil(portions) : Math.floor(portions)
+  }
+
+  const setStockMode = async (p: Product, mode: StockMode) => {
+    if (stockModeOf(p) === mode) return
+    const { error } = await supabase.from('products').update({ stock_mode: mode, is_unlimited: mode === 'none' }).eq('id', p.id)
+    if (error) { showToast("Saqlanmadi: internetni tekshiring"); return }
+    setProducts(prev => prev.map(x => x.id === p.id ? { ...x, stock_mode: mode, is_unlimited: mode === 'none' } : x))
+    showToast(`${p.name}: ${STOCK_MODES.find(m => m.id === mode)?.label}`)
+  }
 
   const toggleAvail = async (p: Product) => {
     await supabase.from('products').update({ is_available: !p.is_available }).eq('id', p.id)
@@ -272,15 +294,17 @@ export default function AdminPage() {
     const stock = stocks.find(s => s.product_id === p.id)
     const smenaChiqim = writeOffs.filter(w => w.product_id === p.id && shift && new Date(w.created_at) >= new Date(shift.opened_at) && w.reason === 'Smena boshida chiqindi').reduce((s, w) => s + w.qty, 0)
     const oddiyChiqim = writeOffs.filter(w => w.product_id === p.id && shift && new Date(w.created_at) >= new Date(shift.opened_at) && w.reason !== 'Smena boshida chiqindi').reduce((s, w) => s + w.qty, 0)
-    const stockIn = stockIns.filter(si => si.product_id === p.id && shift && new Date(si.created_at) >= new Date(shift.opened_at)).reduce((s, si) => s + si.qty, 0)
+    const shiftIns = stockIns.filter(si => si.product_id === p.id && shift && new Date(si.created_at) >= new Date(shift.opened_at))
+    const stockIn = toPortions(p, shiftIns.reduce((s, si) => s + si.qty, 0))
+    const autoIn = toPortions(p, shiftIns.filter(si => si.source === 'auto_extra').reduce((s, si) => s + si.qty, 0), 'ceil')
     const realInitial = (stock?.initial_qty || 0) + smenaChiqim
     const totalChiqim = smenaChiqim + oddiyChiqim
     if (p.unit_type === 'hissa') {
       const remaining = Math.floor(oshHissa / (p.hissa_per_unit || 3))
-      return { ...p, sold, writeOff: totalChiqim, stockIn, remaining, initial: realInitial }
+      return { ...p, sold, writeOff: totalChiqim, stockIn, autoIn, remaining, initial: realInitial }
     }
     const remaining = realInitial + stockIn - sold - totalChiqim
-    return { ...p, sold, writeOff: totalChiqim, stockIn, remaining, initial: realInitial }
+    return { ...p, sold, writeOff: totalChiqim, stockIn, autoIn, remaining, initial: realInitial }
   }).filter(p => p.sold > 0 || p.writeOff > 0 || p.stockIn > 0 || p.initial > 0)
 
   const filteredDebtors = debtors.filter(d =>
@@ -452,7 +476,10 @@ export default function AdminPage() {
                         <tr key={p.id} style={{borderTop:'1px solid #f9fafb'}}>
                           <td style={{padding:'8px 12px', fontWeight:700}}>{p.name}</td>
                           <td style={{padding:'8px 4px', textAlign:'center', color:'#6b7280'}}>{p.initial}</td>
-                          <td style={{padding:'8px 4px', textAlign:'center', color:'#16a34a', fontWeight:700}}>{p.stockIn > 0 ? `+${p.stockIn}` : '—'}</td>
+                          <td style={{padding:'8px 4px', textAlign:'center', color:'#16a34a', fontWeight:700}}>
+                            {p.stockIn > 0 ? `+${p.stockIn}` : '—'}
+                            {p.autoIn > 0 && <div style={{fontSize:'9px', color:'#d97706', fontWeight:700}}>avto +{p.autoIn}</div>}
+                          </td>
                           <td style={{padding:'8px 4px', textAlign:'center', color:'#C8860A', fontWeight:700}}>{p.sold > 0 ? p.sold : '—'}</td>
                           <td style={{padding:'8px 4px', textAlign:'center', color:'#ef4444', fontWeight:700}}>{p.writeOff > 0 ? p.writeOff : '—'}</td>
                           <td style={{padding:'8px 4px', textAlign:'center', fontWeight:900, color: p.remaining < 0 ? '#dc2626' : '#1A1208'}}>{p.remaining}</td>
@@ -527,7 +554,10 @@ export default function AdminPage() {
                 {stockIns.map(si => (
                   <div key={si.id} style={{display:'flex', alignItems:'center', padding:'12px 16px', borderBottom:'1px solid #f9fafb'}}>
                     <div style={{flex:1, fontSize:'12px'}}>
-                      <div style={{fontWeight:700}}>{productName(si.product_id)} — {si.qty} ta</div>
+                      <div style={{fontWeight:700}}>
+                        {productName(si.product_id)} — {si.qty} ta
+                        {si.source === 'auto_extra' && <span style={{marginLeft:'6px', fontSize:'10px', backgroundColor:'#fef3c7', color:'#b45309', padding:'1px 6px', borderRadius:'999px'}}>avto</span>}
+                      </div>
                       <div style={{color:'#9ca3af'}}>{workerName(si.worker_id)}</div>
                     </div>
                     <div style={{fontSize:'12px', color:'#9ca3af'}}>{new Date(si.created_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}</div>
@@ -707,7 +737,7 @@ export default function AdminPage() {
                           {izohlar.map((iz: any, i: number) => (
                             <div key={i} style={{padding:'8px 12px', borderBottom:'1px solid #f9fafb', display:'flex', gap:'8px', alignItems:'flex-start'}}>
                               <div style={{fontSize:'14px', flexShrink:0, marginTop:'1px'}}>
-                                {iz.type === 'chiqim' ? '⚠️' : iz.type === 'ichki' ? '🍽️' : iz.type === 'smena_chiqim' ? '🗑️' : '📊'}
+                                {iz.type === 'chiqim' ? '⚠️' : iz.type === 'ichki' ? '🍽️' : iz.type === 'smena_chiqim' ? '🗑️' : iz.type === 'avto_kirim' ? '🍳' : '📊'}
                               </div>
                               <div style={{flex:1, minWidth:0}}>
                                 <div style={{fontSize:'12px', fontWeight:700, color:'#1A1208'}}>{iz.text}</div>
@@ -795,6 +825,10 @@ export default function AdminPage() {
             </div>
             <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
               <div style={{padding:'12px 16px', borderBottom:'1px solid #f3f4f6', fontWeight:900, fontSize:'14px'}}>Mahsulotlar ({products.length} ta)</div>
+              <div style={{padding:'10px 16px', borderBottom:'1px solid #f3f4f6', backgroundColor:'#f9fafb', fontSize:'12px', color:'#6b7280', lineHeight:1.6}}>
+                <b>Qoldiq rejimi:</b><br/>
+                {STOCK_MODES.map(m => <div key={m.id}><b>{m.label}</b> — {m.hint}</div>)}
+              </div>
               {products.map(p => {
                 const cat = categories.find(c => c.id === p.category_id)
                 return (
@@ -802,6 +836,20 @@ export default function AdminPage() {
                     <div style={{flex:1, minWidth:0}}>
                       <div style={{fontWeight:700, fontSize:'14px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{p.name}</div>
                       <div style={{fontSize:'12px', color:'#9ca3af'}}>{cat?.name} - {fmt(p.price)} som</div>
+                      <div style={{display:'flex', gap:'4px', marginTop:'6px'}}>
+                        {STOCK_MODES.map(m => {
+                          const active = stockModeOf(p) === m.id
+                          return (
+                            <button key={m.id} onClick={() => setStockMode(p, m.id)} title={m.hint}
+                              style={{padding:'3px 8px', borderRadius:'8px', fontSize:'11px', fontWeight:700, cursor:'pointer',
+                                border: active ? '1px solid #C8860A' : '1px solid #e5e7eb',
+                                backgroundColor: active ? '#FFF8E7' : 'white',
+                                color: active ? '#C8860A' : '#9ca3af'}}>
+                              {m.label}
+                            </button>
+                          )
+                        })}
+                      </div>
                     </div>
                     <button onClick={() => toggleAvail(p)}
                       style={{padding:'4px 8px', borderRadius:'999px', fontSize:'12px', fontWeight:700, border:'none', cursor:'pointer', flexShrink:0, backgroundColor: p.is_available ? '#dcfce7' : '#fee2e2', color: p.is_available ? '#15803d' : '#b91c1c'}}>

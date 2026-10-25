@@ -1,10 +1,19 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { LogOut, ShoppingCart, Plus, X, PackagePlus, PackageMinus, Clock, Search, UtensilsCrossed } from 'lucide-react'
 import DebtorCard from './components/DebtorCard'
 import jsPDF from 'jspdf'
+import {
+  canSetQty, extraQty, extraSummary, isVisible as isProductVisible, stockInfo, stockModeOf, toBalances,
+  type Balances, type NewOrderExtra, type StockLevel, type StockMode,
+} from '@/lib/stock'
+import { friendlyError } from '@/lib/errors'
+
+const LEVEL_STYLE: Record<StockLevel, string> = {
+  ok: 'text-green-600', low: 'text-orange-500', empty: 'text-red-500', extra: 'text-amber-600', muted: 'text-gray-400',
+}
 
 type User = { id: string; name: string; role: string }
 type Category = { id: string; name: string }
@@ -12,15 +21,11 @@ type Product = {
   id: string; name: string; price: number; category_id: string
   is_available: boolean; unit_type: string; hissa_per_unit: number
   kg_to_hissa: number; is_unlimited: boolean; unit_label: string
-  litr_per_unit: number | null; hide_when_empty: boolean
+  litr_per_unit: number | null; hide_when_empty: boolean; stock_mode?: StockMode
 }
 type CartItem = { product: Product; qty: number }
 type Bill = { id: number; cart: CartItem[] }
 type Shift = { id: string; is_open: boolean; opened_at: string }
-type Stock = { product_id: string; initial_qty: number }
-type StockIn = { id: string; product_id: string; qty: number }
-type WriteOff = { id: string; product_id: string; qty: number }
-type OrderItem = { order_id: string; product_id: string; qty: number }
 type Debtor = { id: string; name: string; phone: string; total_debt: number }
 type PrevStock = { product_id: string; name: string; qty: number; qty_original: number; note: string }
 type ActiveModal = null | 'pay' | 'kirим' | 'chiqim' | 'smena' | 'moslashuv' | 'debtors' | 'close_shift' | 'shift_start'
@@ -31,11 +36,11 @@ export default function CashierPage() {
   const [categories, setCategories] = useState<Category[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [shift, setShift] = useState<Shift | null>(null)
-  const [stocks, setStocks] = useState<Stock[]>([])
-  const [stockIns, setStockIns] = useState<StockIn[]>([])
-  const [writeOffs, setWriteOffs] = useState<WriteOff[]>([])
-  const [orderItems, setOrderItems] = useState<OrderItem[]>([])
-  const [hissaStock, setHissaStock] = useState<{[id: string]: number}>({})
+  const [balances, setBalances] = useState<Balances>({})
+  const [loadError, setLoadError] = useState('')
+  const orderRequestId = useRef<{ id: string; sig: string } | null>(null)
+  const [payError, setPayError] = useState('')
+  const busy = useRef(false)
   const [debtors, setDebtors] = useState<Debtor[]>([])
   const [prevStocks, setPrevStocks] = useState<PrevStock[]>([])
   const [activeCat, setActiveCat] = useState('Barchasi')
@@ -100,75 +105,63 @@ export default function CashierPage() {
       supabase.from('products').select('*').order('created_at'),
       supabase.from('debtors').select('*').order('name'),
     ])
-    setCategories(cats || [])
-    setProducts(prods || [])
+    if (!cats || !prods) {
+      setLoadError("Ma'lumot yuklanmadi. Internetni tekshiring.")
+      return
+    }
+    setCategories(cats)
+    setProducts(prods)
     setDebtors(dbtrs || [])
 
-    const { data: shiftData } = await supabase
-  .from('shifts')
-  .select('*')
-  .eq('is_open', true)
-  .order('opened_at', { ascending: false })
-  .limit(1)
-  .maybeSingle()
+    const { data: shiftData, error: shiftErr } = await supabase
+      .from('shifts')
+      .select('*')
+      .eq('is_open', true)
+      .order('opened_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (shiftErr) { setLoadError("Smena ma'lumoti yuklanmadi. Internetni tekshiring."); return }
 
-  setShift(shiftData || null) 
+    setShift(shiftData || null)
     if (shiftData?.id) {
-      const { data: oshStock } = await supabase.from('osh_stock').select('*').eq('shift_id', shiftData.id).maybeSingle()
-      if (oshStock) setHissaStock({ [shiftData.id]: oshStock.total_hissa })
-
-      const [{ data: stockData }, { data: siData }, { data: woData }, { data: ords }] = await Promise.all([
-        supabase.from('shift_stock').select('*').eq('shift_id', shiftData.id),
-        supabase.from('stock_ins').select('*').eq('shift_id', shiftData.id),
-        supabase.from('write_offs').select('*').eq('shift_id', shiftData.id),
-        supabase.from('orders').select('id').eq('shift_id', shiftData.id),
-      ])
-      setStocks(stockData || [])
-      setStockIns(siData || [])
-      setWriteOffs(woData || [])
-
-      if (ords && ords.length > 0) {
-        const orderIds = ords.map((o: {id: string}) => o.id)
-        const { data: oi } = await supabase.from('order_items').select('*').in('order_id', orderIds)
-        setOrderItems(oi || [])
-      } else { setOrderItems([]) }
+      const ok = await loadBalances(shiftData.id)
+      if (!ok) return
     } else {
-      setStocks([]); setStockIns([]); setWriteOffs([]); setOrderItems([])
+      setBalances({})
     }
+    setLoadError('')
   }
+
+  // Qoldiqlar bazadagi shift_balances funksiyasidan olinadi (yagona haqiqat manbai)
+  const loadBalances = async (shiftId: string): Promise<boolean> => {
+    const { data, error } = await supabase.rpc('shift_balances', { p_shift_id: shiftId })
+    if (error) {
+      setLoadError(`Qoldiqlar yuklanmadi: ${friendlyError(error)}`)
+      return false
+    }
+    setBalances(toBalances(data))
+    setLoadError('')
+    return true
+  }
+
+  const openKirimFor = (p: Product) => { setSelectedProd(p.id); setQty(''); setActiveModal('kirим') }
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 2500) }
   const fmt = (n: number) => n.toLocaleString('uz-UZ')
 
-  const getHissaQoldiq = (product: Product): number => {
-    if (product.unit_type !== 'hissa' || !shift) return 0
-    return Math.floor((hissaStock[shift.id] || 0) / product.hissa_per_unit)
-  }
-
-  const getDonaQoldiq = (productId: string): number | null => {
-    if (!shift) return null
-    const stock = stocks.find(s => s.product_id === productId)
-    if (!stock) return null
-    const kirim = stockIns.filter(si => si.product_id === productId).reduce((s, si) => s + si.qty, 0)
-    const sotildi = orderItems.filter(oi => oi.product_id === productId).reduce((s, oi) => s + oi.qty, 0)
-    const chiqim = writeOffs.filter(w => w.product_id === productId).reduce((s, w) => s + w.qty, 0)
-    return (stock.initial_qty || 0) + kirim - sotildi - chiqim
-  }
-
-  const getSystemQty = (product: Product): number => {
-    if (product.unit_type === 'hissa') return getHissaQoldiq(product)
-    return getDonaQoldiq(product.id) ?? 0
-  }
+  const modeOf = (p: Product): StockMode => stockModeOf(p)
+  const getBalance = (productId: string): number => balances[productId]?.balance ?? 0
+  const getSystemQty = (product: Product): number => getBalance(product.id)
+  const unitOf = (p: Product) => (p.litr_per_unit && p.litr_per_unit > 0 ? 'stakan' : 'ta')
 
   // Mahsulot ko'rinadimi?
-  const isVisible = (p: Product): boolean => {
-    if (!p.is_available) return false
-    if (!p.hide_when_empty) return true // doim ko'rinadi (mastava, jarkoe kabi)
-    // hide_when_empty=true — tugaganda yashiriladi
-    if (p.unit_type === 'hissa') return getHissaQoldiq(p) > 0
-    const qoldiq = getDonaQoldiq(p.id)
-    if (qoldiq !== null && qoldiq <= 0) return false
-    return true
+  const isVisible = (p: Product): boolean => isProductVisible(p, modeOf(p), getBalance(p.id))
+
+  // Savatdagi miqdorni `qty` ga chiqarish mumkinmi? Mumkin bo'lmasa xabar chiqaradi.
+  const checkQty = (p: Product, qty: number): boolean => {
+    if (canSetQty(modeOf(p), getBalance(p.id), qty)) return true
+    showToast(`${p.name} tugadi!`)
+    return false
   }
 
   const openShift = async () => {
@@ -217,8 +210,13 @@ export default function CashierPage() {
   const doOpenShift = async (customPrevStocks?: PrevStock[]) => {
     setLoading(true)
     const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
-    const { data } = await supabase.from('shifts').insert({ opened_by: u.id, is_open: true }).select().single()
-    if (data) {
+    const { data, error } = await supabase.from('shifts').insert({ opened_by: u.id, is_open: true }).select().single()
+    if (error || !data) {
+      showToast(`Smena ochilmadi: ${friendlyError(error)}`)
+      setLoading(false)
+      return
+    }
+    {
       const workingPrevStocks = customPrevStocks ?? prevStocks
       const stockRows = products.map(p => { const prev = workingPrevStocks.find(ps => ps.product_id === p.id); return { shift_id: data.id, product_id: p.id, initial_qty: prev ? prev.qty : 0 } })
       await supabase.from('shift_stock').insert(stockRows)
@@ -233,12 +231,15 @@ export default function CashierPage() {
         const butunQty = workingPrevStocks.find(ps => ps.product_id === butun?.id)?.qty || 0
         const yarimQty = workingPrevStocks.find(ps => ps.product_id === yarim?.id)?.qty || 0
         const totalHissa = butunQty * 3
-        if (totalHissa > 0) { await supabase.from('osh_stock').insert({ shift_id: data.id, product_group: 'osh', total_hissa: totalHissa }); setHissaStock({ [data.id]: totalHissa }) }
-        else if (yarimQty > 0) { const h = yarimQty * 2; await supabase.from('osh_stock').insert({ shift_id: data.id, product_group: 'osh', total_hissa: h }); setHissaStock({ [data.id]: h }) }
+        if (totalHissa > 0) { await supabase.from('osh_stock').insert({ shift_id: data.id, product_group: 'osh', total_hissa: totalHissa }) }
+        else if (yarimQty > 0) { await supabase.from('osh_stock').insert({ shift_id: data.id, product_group: 'osh', total_hissa: yarimQty * 2 }) }
       }
-      setShift(data); showToast('Smena ochildi!'); setPrevStocks([]); await loadData()
+      // Oynani darrov yopamiz: ma'lumot yuklanishini kutib turganda kassir boshqa oyna
+      // (kirim, to'lov) ochgan bo'lishi mumkin, uni keyin yopib yubormaslik kerak.
+      setShift(data); setActiveModal(null); showToast('Smena ochildi!'); setPrevStocks([])
+      await loadData()
     }
-    setLoading(false); setActiveModal(null)
+    setLoading(false)
   }
 
   const closeShift = async () => {
@@ -251,7 +252,7 @@ export default function CashierPage() {
     generateShiftPDF(reportRows)
     localStorage.removeItem('pos_bills'); localStorage.removeItem('pos_active_bill'); localStorage.removeItem('pos_next_bill')
     setBills([{ id: 1, cart: [] }]); setActiveBillId(1); setNextBillId(2)
-    setShift(null); setStocks([]); setStockIns([]); setWriteOffs([]); setOrderItems([]); setHissaStock({}); setShiftReport({})
+    setShift(null); setBalances({}); setShiftReport({})
     showToast('Smena yopildi! PDF yuklab olindi.'); setLoading(false); setActiveModal(null)
   }
 
@@ -306,28 +307,15 @@ export default function CashierPage() {
   const addToCart = (product: Product) => {
     if (!shift) { showToast('Avval smena oching!'); return }
     if (!product.is_available) return
-    if (!product.is_unlimited) {
-      if (product.unit_type === 'hissa') {
-        const qoldiq = getHissaQoldiq(product)
-        const cartQtyNow = cart.find(i => i.product.id === product.id)?.qty || 0
-        if (cartQtyNow >= qoldiq) { showToast(`${product.name} tugadi!`); return }
-      } else {
-        const qoldiq = getDonaQoldiq(product.id)
-        if (qoldiq !== null && qoldiq <= 0) { showToast(`${product.name} tugadi!`); return }
-        if (qoldiq !== null) { const cartQtyNow = cart.find(i => i.product.id === product.id)?.qty || 0; if (cartQtyNow >= qoldiq) { showToast(`${product.name} tugadi!`); return } }
-      }
-    }
     const existing = cart.find(i => i.product.id === product.id)
+    if (!checkQty(product, (existing?.qty || 0) + 1)) return
     if (existing) updateBillCart(cart.map(i => i.product.id === product.id ? { ...i, qty: i.qty + 1 } : i))
     else updateBillCart([...cart, { product, qty: 1 }])
   }
 
   const changeQty = (productId: string, delta: number) => {
     const prod = products.find(p => p.id === productId)
-    if (delta > 0 && prod && !prod.is_unlimited) {
-      if (prod.unit_type === 'hissa') { const q = getHissaQoldiq(prod); if ((cart.find(i => i.product.id === productId)?.qty || 0) >= q) { showToast(`${prod.name} tugadi!`); return } }
-      else { const q = getDonaQoldiq(productId); if (q !== null && (cart.find(i => i.product.id === productId)?.qty || 0) >= q) { showToast(`${prod.name} tugadi!`); return } }
-    }
+    if (delta > 0 && prod && !checkQty(prod, (cart.find(i => i.product.id === productId)?.qty || 0) + delta)) return
     updateBillCart(cart.map(i => i.product.id === productId ? { ...i, qty: i.qty + delta } : i).filter(i => i.qty > 0))
   }
 
@@ -335,80 +323,104 @@ export default function CashierPage() {
   const cartQty = (id: string) => cart.find(i => i.product.id === id)?.qty || 0
 
   const confirmOrder = async () => {
-    if (cart.length === 0) return
+    if (cart.length === 0 || !shift || busy.current) return
+    busy.current = true
     setLoading(true)
-    const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
-    let debtorId = selectedDebtorId || null
-    if (payType === 'qarz' && !selectedDebtorId && debtorName.trim()) {
-      const { data: nd } = await supabase.from('debtors').insert({ name: debtorName.trim(), phone: debtorPhone.trim(), total_debt: total }).select().single()
-      if (nd) { debtorId = nd.id; setDebtors(prev => [...prev, nd]) }
-    } else if (payType === 'qarz' && selectedDebtorId) {
-      const debtor = debtors.find(d => d.id === selectedDebtorId)
-      if (debtor) { await supabase.from('debtors').update({ total_debt: debtor.total_debt + total, updated_at: new Date().toISOString() }).eq('id', selectedDebtorId); setDebtors(prev => prev.map(d => d.id === selectedDebtorId ? { ...d, total_debt: d.total_debt + total } : d)) }
+    setPayError('')
+    try {
+      const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
+      const paymentNote = moslashuvActual && moslashuvActual !== total ? `Moslashuv: ${fmt(moslashuvActual)} som (farq: ${fmt(moslashuvActual - total)} som)` : null
+      const items = cart.map(i => ({ product_id: i.product.id, qty: i.qty }))
+      const debtorId = payType === 'qarz' && selectedDebtorId ? selectedDebtorId : null
+      const newDebtorName = payType === 'qarz' && !selectedDebtorId ? (debtorName.trim() || debtorSearch.trim()) : ''
+
+      // Bir xil buyurtma qayta yuborilsa (internet uzilib qayta bosilsa) bazada ikkinchisi yaratilmaydi
+      const sig = JSON.stringify([payType, items, debtorId, newDebtorName, moslashuvActual])
+      if (orderRequestId.current?.sig !== sig) orderRequestId.current = { id: crypto.randomUUID(), sig }
+
+      const { data, error } = await supabase.rpc('create_order', {
+        p_shift_id: shift.id,
+        p_worker_id: u.id,
+        p_pay_type: payType,
+        p_items: items,
+        p_debtor_id: debtorId,
+        p_debtor_name: newDebtorName || null,
+        p_debtor_phone: payType === 'qarz' ? debtorPhone.trim() : null,
+        p_actual_paid: moslashuvActual,
+        p_payment_note: paymentNote,
+        p_request_id: orderRequestId.current.id,
+      })
+
+      if (error) {
+        setPayError(friendlyError(error))
+        // Qoldiq o'zgargan bo'lishi mumkin (boshqa planshetda sotilgan) - yangilab qo'yamiz
+        if (error.message === 'SHIFT_CLOSED') await loadData()
+        else if (error.message !== 'DEBTOR_REQUIRED') await loadBalances(shift.id)
+        return
+      }
+
+      const result = data as { extra?: NewOrderExtra[] }
+      orderRequestId.current = null
+      updateBillCart([]); setDebtorName(''); setDebtorPhone(''); setSelectedDebtorId(''); setDebtorSearch('')
+      setPayType('naqd'); setMoslashuvActual(null); setActiveModal(null)
+      if (payType === 'qarz') {
+        const { data: dbtrs } = await supabase.from('debtors').select('*').order('name')
+        if (dbtrs) setDebtors(dbtrs)
+      }
+      await loadBalances(shift.id)
+      const extra = extraSummary(result.extra)
+      showToast(extra ? `Hisob ${activeBillId} tasdiqlandi! Avto-kirim: ${extra}` : `Hisob ${activeBillId} tasdiqlandi!`)
+    } finally {
+      busy.current = false
+      setLoading(false)
     }
-    const actualPaid = moslashuvActual ?? total
-    const paymentNote = moslashuvActual && moslashuvActual !== total ? `Moslashuv: ${fmt(moslashuvActual)} som (farq: ${fmt(moslashuvActual - total)} som)` : null
-    const { data: order, error } = await supabase.from('orders').insert({ shift_id: shift?.id || null, worker_id: u.id, total: payType === 'ichki' ? 0 : total, pay_type: payType, debtor_name: payType === 'qarz' ? (debtorName || debtors.find(d => d.id === selectedDebtorId)?.name) : null, debtor_id: debtorId, debt_paid: payType !== 'qarz', actual_paid: payType === 'ichki' ? 0 : actualPaid, payment_note: paymentNote }).select().single()
-    if (error || !order) { setLoading(false); return }
-    const items = cart.map(i => ({ order_id: order.id, product_id: i.product.id, qty: i.qty, price: i.product.price }))
-    await supabase.from('order_items').insert(items)
-    setOrderItems(prev => [...prev, ...items.map(i => ({ order_id: i.order_id, product_id: i.product_id, qty: i.qty }))])
-    const hissaProducts = cart.filter(i => i.product.unit_type === 'hissa')
-    if (hissaProducts.length > 0 && shift) {
-      const totalAyirildi = hissaProducts.reduce((s, i) => s + i.product.hissa_per_unit * i.qty, 0)
-      const newHissa = Math.max(0, (hissaStock[shift.id] || 0) - totalAyirildi)
-      const { data: ex } = await supabase.from('osh_stock').select('*').eq('shift_id', shift.id).eq('product_group', 'osh').maybeSingle()
-      if (ex) await supabase.from('osh_stock').update({ total_hissa: newHissa, updated_at: new Date().toISOString() }).eq('id', ex.id)
-      setHissaStock(prev => ({ ...prev, [shift.id]: newHissa }))
-    }
-    updateBillCart([]); setDebtorName(''); setDebtorPhone(''); setSelectedDebtorId(''); setDebtorSearch('')
-    setPayType('naqd'); setMoslashuvActual(null); setActiveModal(null); setLoading(false)
-    showToast(`Hisob ${activeBillId} tasdiqlandi!`)
   }
 
   const confirmKirim = async () => {
-    if (!selectedProd || !qty) return
-    setLoading(true)
-    const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
+    if (!selectedProd || !qty || !shift || busy.current) return
     const prod = products.find(p => p.id === selectedProd)
-    const savedQty = prod?.litr_per_unit ? Math.floor(parseFloat(qty) / prod.litr_per_unit) : parseFloat(qty)
-    const { data: newSi } = await supabase.from('stock_ins').insert({ shift_id: shift?.id || null, product_id: selectedProd, qty: savedQty, worker_id: u.id }).select().single()
-    if (newSi) setStockIns(prev => [...prev, newSi])
-    // Yo'q mahsulot bo'lsa — avtomatik borga o'tkazamiz
-    if (prod && !prod.is_available) {
-      await supabase.from('products').update({ is_available: true }).eq('id', selectedProd)
-      setProducts(prev => prev.map(p => p.id === selectedProd ? { ...p, is_available: true } : p))
-      showToast(prod.litr_per_unit ? `${parseFloat(qty)}L = ${savedQty} stakan kirim! Menuga qo'shildi.` : `Kirim qilindi! "${prod.name}" menuga qo'shildi.`)
-    } else {
-      showToast(prod?.litr_per_unit ? `${parseFloat(qty)}L = ${savedQty} stakan kirim!` : 'Kirim qilindi!')
+    const entered = parseFloat(qty)
+    const savedQty = prod?.litr_per_unit ? Math.floor(entered / prod.litr_per_unit) : entered
+    if (!prod || !(savedQty > 0)) { showToast("Miqdor noto'g'ri"); return }
+    busy.current = true
+    setLoading(true)
+    try {
+      const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
+      const { data, error } = await supabase.rpc('add_stock_in', {
+        p_shift_id: shift.id, p_worker_id: u.id, p_product_id: selectedProd, p_qty: savedQty,
+      })
+      if (error) { showToast(friendlyError(error)); return }
+      const madeAvailable = (data as { made_available?: boolean }).made_available
+      if (madeAvailable) setProducts(prev => prev.map(p => p.id === selectedProd ? { ...p, is_available: true } : p))
+      await loadBalances(shift.id)
+      const kirimText = prod.litr_per_unit ? `${entered}L = ${savedQty} stakan kirim!` : 'Kirim qilindi!'
+      showToast(madeAvailable ? `${kirimText} "${prod.name}" menuga qo'shildi.` : kirimText)
+      setSelectedProd(''); setQty(''); setActiveModal(null)
+    } finally {
+      busy.current = false
+      setLoading(false)
     }
-    if (prod?.unit_type === 'hissa' && shift) {
-      const yangiHissa = Math.round(parseFloat(qty) * (prod.kg_to_hissa || 21))
-      const newHissa = (hissaStock[shift.id] || 0) + yangiHissa
-      const { data: ex } = await supabase.from('osh_stock').select('*').eq('shift_id', shift.id).eq('product_group', 'osh').maybeSingle()
-      if (ex) await supabase.from('osh_stock').update({ total_hissa: newHissa, updated_at: new Date().toISOString() }).eq('id', ex.id)
-      else await supabase.from('osh_stock').insert({ shift_id: shift.id, product_group: 'osh', total_hissa: newHissa })
-      setHissaStock(prev => ({ ...prev, [shift.id]: newHissa }))
-    }
-    setSelectedProd(''); setQty(''); setActiveModal(null); setLoading(false)
   }
 
   const confirmChiqim = async () => {
-    if (!selectedProd || !qty || !reason.trim()) return
+    const amount = parseInt(qty)
+    if (!selectedProd || !shift || !reason.trim() || busy.current) return
+    if (!(amount > 0)) { showToast("Miqdor noto'g'ri"); return }
+    busy.current = true
     setLoading(true)
-    const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
-    const prod = products.find(p => p.id === selectedProd)
-    const { data: newWo } = await supabase.from('write_offs').insert({ shift_id: shift?.id || null, product_id: selectedProd, qty: parseInt(qty), reason: reason.trim(), worker_id: u.id }).select().single()
-    if (newWo) setWriteOffs(prev => [...prev, { id: newWo.id, product_id: newWo.product_id, qty: newWo.qty }])
-    if (prod?.unit_type === 'hissa' && shift) {
-      const ayirilganHissa = parseInt(qty) * (prod.hissa_per_unit || 3)
-      const newHissa = Math.max(0, (hissaStock[shift.id] || 0) - ayirilganHissa)
-      const { data: ex } = await supabase.from('osh_stock').select('*').eq('shift_id', shift.id).eq('product_group', 'osh').maybeSingle()
-      if (ex) await supabase.from('osh_stock').update({ total_hissa: newHissa, updated_at: new Date().toISOString() }).eq('id', ex.id)
-      setHissaStock(prev => ({ ...prev, [shift.id]: newHissa }))
+    try {
+      const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
+      const { error } = await supabase.rpc('add_write_off', {
+        p_shift_id: shift.id, p_worker_id: u.id, p_product_id: selectedProd, p_qty: amount, p_reason: reason.trim(),
+      })
+      if (error) { showToast(friendlyError(error)); return }
+      await loadBalances(shift.id)
+      setSelectedProd(''); setQty(''); setReason(''); setActiveModal(null)
+      showToast('Chiqim qilindi!')
+    } finally {
+      busy.current = false
+      setLoading(false)
     }
-    setSelectedProd(''); setQty(''); setReason(''); setActiveModal(null); setLoading(false)
-    showToast('Chiqim qilindi!')
   }
 
   const addCategory = async () => {
@@ -449,18 +461,25 @@ export default function CashierPage() {
           <div className="text-gray-500 text-xs">{user?.name} · Kassir</div>
         </div>
         <div style={{display:'flex', alignItems:'center', gap:'6px', flexShrink:0}}>
-          <button onClick={() => setActiveModal('smena')} style={{width:'32px', height:'32px', borderRadius:'8px', border: shift ? '1px solid #22c55e' : '1px solid #ef4444', background: shift ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)', color: shift ? '#4ade80' : '#f87171', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer'}}>
+          <button aria-label="Smena" title="Smena" onClick={() => setActiveModal('smena')} style={{width:'32px', height:'32px', borderRadius:'8px', border: shift ? '1px solid #22c55e' : '1px solid #ef4444', background: shift ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)', color: shift ? '#4ade80' : '#f87171', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer'}}>
             <Clock size={14}/>
           </button>
           {shift && <>
-            <button onClick={() => setActiveModal('kirим')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#F5C842', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}><PackagePlus size={13}/></button>
-            <button onClick={() => setActiveModal('chiqim')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#f87171', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}><PackageMinus size={13}/></button>
-            <button onClick={() => setActiveModal('debtors')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#fbbf24', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}><Search size={13}/></button>
+            <button aria-label="Kirim" title="Kirim" onClick={() => setActiveModal('kirим')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#F5C842', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}><PackagePlus size={13}/></button>
+            <button aria-label="Chiqim" title="Chiqim" onClick={() => setActiveModal('chiqim')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#f87171', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}><PackageMinus size={13}/></button>
+            <button aria-label="Qarzdorlar" title="Qarzdorlar" onClick={() => setActiveModal('debtors')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#fbbf24', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}><Search size={13}/></button>
           </>}
-          <button onClick={() => setShowMenu(true)} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#a78bfa', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}><UtensilsCrossed size={13}/></button>
-          <button onClick={() => { localStorage.removeItem('pos_user'); router.push('/') }} style={{width:'32px', height:'32px', borderRadius:'8px', border:'1px solid #4b5563', color:'#9ca3af', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', background:'transparent'}}><LogOut size={13}/></button>
+          <button aria-label="Menyu" title="Menyu" onClick={() => setShowMenu(true)} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#a78bfa', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}><UtensilsCrossed size={13}/></button>
+          <button aria-label="Chiqish" title="Chiqish" onClick={() => { localStorage.removeItem('pos_user'); router.push('/') }} style={{width:'32px', height:'32px', borderRadius:'8px', border:'1px solid #4b5563', color:'#9ca3af', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', background:'transparent'}}><LogOut size={13}/></button>
         </div>
       </div>
+
+      {loadError && (
+        <div className="bg-red-600 text-white px-4 py-2 text-sm font-bold flex items-center justify-between gap-3 flex-shrink-0">
+          <span>{loadError}</span>
+          <button onClick={loadData} className="px-3 py-1 rounded-lg bg-white/20 hover:bg-white/30 text-xs font-black">Qayta urinish</button>
+        </div>
+      )}
 
       {!shift ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-4 p-8">
@@ -486,11 +505,10 @@ export default function CashierPage() {
             <div className="grid grid-cols-3 gap-3">
               {filteredProducts.map(p => {
                 const qty = cartQty(p.id)
-                const isHissa = p.unit_type === 'hissa'
-                const hissaQoldiq = getHissaQoldiq(p)
-                const donaQoldiq = getDonaQoldiq(p.id)
-                const isKampot = !isHissa && p.litr_per_unit !== null && p.litr_per_unit > 0
-                const kampotStakan = isKampot ? donaQoldiq : null
+                const mode = modeOf(p)
+                const balance = getBalance(p.id)
+                const info = stockInfo(mode, balance, unitOf(p))
+                const extra = extraQty(mode, balance, qty)
                 return (
                   <div key={p.id} onClick={() => addToCart(p)}
                     className={`bg-white rounded-2xl overflow-hidden cursor-pointer border-2 transition-all select-none ${qty > 0 ? 'border-[#F5C842]' : 'border-transparent hover:border-[#C8860A] hover:-translate-y-0.5'}`}>
@@ -501,21 +519,14 @@ export default function CashierPage() {
                     <div className="p-3">
                       <div className="font-extrabold text-[#1A1208] text-sm leading-tight">{p.name}</div>
                       <div className="text-[#C8860A] font-black text-base mt-1">{fmt(p.price)} so'm</div>
-                      {isHissa ? (
-                        <div className={`text-xs font-bold mt-1 ${hissaQoldiq === 0 ? 'text-red-500' : hissaQoldiq <= 5 ? 'text-orange-500' : 'text-green-600'}`}>
-                          {hissaQoldiq === 0 ? 'Kirim kerak' : `~${hissaQoldiq} ta`}
-                        </div>
-                      ) : isKampot ? (
-                        <div className={`text-xs font-bold mt-1 ${(kampotStakan || 0) <= 0 ? 'text-red-500' : (kampotStakan || 0) <= 5 ? 'text-orange-500' : 'text-green-600'}`}>
-                          {(kampotStakan || 0) <= 0 ? 'Kirim kerak' : `~${kampotStakan} stakan`}
-                        </div>
-                      ) : p.is_unlimited ? (
-                        <div className="text-xs text-gray-400 mt-1">{donaQoldiq !== null && donaQoldiq > 0 ? `~${donaQoldiq} ta` : 'Kirim kerak'}</div>
-                      ) : donaQoldiq !== null ? (
-                        <div className={`text-xs font-bold mt-1 ${donaQoldiq <= 0 ? 'text-red-500' : donaQoldiq <= 5 ? 'text-orange-500' : 'text-green-600'}`}>
-                          {donaQoldiq <= 0 ? 'Tugadi!' : `Qoldiq: ${donaQoldiq} ta`}
-                        </div>
-                      ) : null}
+                      {info && <div className={`text-xs font-bold mt-1 ${LEVEL_STYLE[info.level]}`}>{info.text}</div>}
+                      {extra > 0 && <div className="text-[11px] font-bold text-amber-600">+{extra} avto-kirim bo&apos;ladi</div>}
+                      {mode === 'soft' && (info?.level === 'extra' || info?.level === 'low') && (
+                        <button type="button" onClick={e => { e.stopPropagation(); openKirimFor(p) }}
+                          className="mt-1.5 px-2 py-1 rounded-lg bg-[#FFF8E7] border border-[#F5C842] text-[#C8860A] text-[11px] font-black">
+                          + tayyor
+                        </button>
+                      )}
                     </div>
                   </div>
                 )
@@ -547,6 +558,9 @@ export default function CashierPage() {
                 <div className="flex-1 min-w-0">
                   <div className="font-bold text-sm text-[#1A1208] truncate">{item.product.name}</div>
                   <div className="text-gray-400 text-xs">{fmt(item.product.price)} x {item.qty}</div>
+                  {extraQty(modeOf(item.product), getBalance(item.product.id), item.qty) > 0 && (
+                    <div className="text-[11px] font-bold text-amber-600">Tizimda yetmaydi: +{extraQty(modeOf(item.product), getBalance(item.product.id), item.qty)} avto-kirim</div>
+                  )}
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0">
                   <button onClick={() => changeQty(item.product.id, -1)} className="w-7 h-7 rounded-lg border border-gray-200 bg-gray-50 font-bold flex items-center justify-center hover:border-[#C8860A] hover:text-[#C8860A] transition-all">-</button>
@@ -555,10 +569,7 @@ export default function CashierPage() {
                       const val = parseInt(e.target.value)
                       if (!val || val < 1) { e.target.value = String(item.qty); return }
                       const prod = products.find(p => p.id === item.product.id)
-                      if (prod && !prod.is_unlimited) {
-                        if (prod.unit_type === 'hissa') { const q = getHissaQoldiq(prod); if (val > q) { showToast(`${prod.name} tugadi!`); e.target.value = String(item.qty); return } }
-                        else { const q = getDonaQoldiq(item.product.id); if (q !== null && val > q) { showToast(`${prod.name} tugadi!`); e.target.value = String(item.qty); return } }
-                      }
+                      if (prod && !checkQty(prod, val)) { e.target.value = String(item.qty); return }
                       updateBillCart(cart.map(i => i.product.id === item.product.id ? { ...i, qty: val } : i))
                     }} key={item.qty}
                     style={{width:'44px', textAlign:'center', fontWeight:900, fontSize:'14px', border:'1px solid #e5e7eb', borderRadius:'6px', padding:'2px 4px', outline:'none'}}/>
@@ -574,7 +585,7 @@ export default function CashierPage() {
               <span className="text-[#C8860A] font-black text-2xl">{fmt(total)} so'm</span>
             </div>
             <button onClick={() => setActiveModal('moslashuv')} className="w-full py-2 rounded-xl bg-gray-100 text-gray-600 font-bold text-xs mb-2 hover:bg-gray-200 transition-all">Moslashuvchan to'lov</button>
-            <button disabled={cart.length === 0} onClick={() => setActiveModal('pay')} className="w-full py-3.5 rounded-xl bg-[#C8860A] text-[#1A1208] font-black text-base transition-all hover:bg-[#F5C842] disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">Buyurtma berish</button>
+            <button disabled={cart.length === 0} onClick={() => { setPayError(''); setActiveModal('pay') }} className="w-full py-3.5 rounded-xl bg-[#C8860A] text-[#1A1208] font-black text-base transition-all hover:bg-[#F5C842] disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">Buyurtma berish</button>
           </div>
         </div>
       </div>
@@ -715,6 +726,7 @@ export default function CashierPage() {
               </div>
             )}
             {payType === 'ichki' && <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 mb-4 text-sm text-yellow-700 font-bold">Bu buyurtma tushum hisobiga kirmaydi</div>}
+            {payError && <div className="bg-red-50 border border-red-200 text-red-600 rounded-xl px-4 py-3 text-sm font-bold mb-3">{payError}</div>}
             <button onClick={confirmOrder} disabled={loading || (payType === 'qarz' && !selectedDebtorId && !debtorName.trim() && !debtorSearch.trim())} className="w-full py-4 rounded-xl bg-[#1E7B47] text-white font-black text-base disabled:opacity-50">
               {loading ? 'Saqlanmoqda...' : 'Tasdiqlash'}
             </button>
@@ -785,7 +797,16 @@ export default function CashierPage() {
                   )}
                 </div>
               )
-              return <input type="number" placeholder="Miqdor (dona)" value={qty} onChange={e => setQty(e.target.value)} className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-4 outline-none focus:border-[#C8860A]"/>
+              return (
+                <div className="mb-4">
+                  <input type="number" placeholder="Miqdor (dona)" value={qty} onChange={e => setQty(e.target.value)} className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-2 outline-none focus:border-[#C8860A]"/>
+                  <div className="flex gap-2">
+                    {[1, 5, 10, 20].map(n => (
+                      <button key={n} type="button" onClick={() => setQty(String((parseFloat(qty) || 0) + n))} className="flex-1 py-2 rounded-xl bg-[#FFF8E7] border border-[#F5C842] text-[#C8860A] text-sm font-black">+{n}</button>
+                    ))}
+                  </div>
+                </div>
+              )
             })()}
             <button onClick={confirmKirim} disabled={loading || !selectedProd || !qty} className="w-full py-4 rounded-xl bg-[#1E7B47] text-white font-black text-base disabled:opacity-50">{loading ? '...' : 'Kirim qilish'}</button>
           </div>
