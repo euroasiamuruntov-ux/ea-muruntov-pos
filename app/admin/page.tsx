@@ -6,6 +6,7 @@ import jsPDF from 'jspdf'
 import { Clock, UtensilsCrossed, Users, BarChart3, LogOut, PackagePlus, PackageMinus, Search, Calendar } from 'lucide-react'
 import DebtorCard from '../cashier/components/DebtorCard'
 import { STOCK_MODES, stockModeOf, type StockMode } from '@/lib/stock'
+import { summarizeOsh } from '@/lib/osh'
 
 type User = { id: string; name: string; role: string }
 type Category = { id: string; name: string; order_num: number }
@@ -242,6 +243,14 @@ export default function AdminPage() {
     showToast(`${p.name}: ${STOCK_MODES.find(m => m.id === mode)?.label}`)
   }
 
+  // Osh kirimi kg bilan yoziladi: qo'lda kirim "1 kg", avto-kirim "3 hissa" ko'rinishida; boshqalari "ta"
+  const stockInLabel = (si: StockIn) => {
+    const p = products.find(x => x.id === si.product_id)
+    if (p?.unit_type !== 'hissa') return `${si.qty} ta`
+    if (si.source === 'auto_extra') return `${Math.round(si.qty * (p.kg_to_hissa || 21))} hissa`
+    return `${Number(Number(si.qty).toFixed(2))} kg`
+  }
+
   const toggleAvail = async (p: Product) => {
     await supabase.from('products').update({ is_available: !p.is_available }).eq('id', p.id)
     setProducts(prev => prev.map(x => x.id === p.id ? { ...x, is_available: !x.is_available } : x))
@@ -288,7 +297,9 @@ export default function AdminPage() {
   const ichkiOrders = shiftOrders.filter(o => o.pay_type === 'ichki')
   const moslashuvOrders = shiftOrders.filter(o => o.payment_note)
 
-  const soldByProduct = products.map(p => {
+  // Osh (butun/yarim) bitta umumiy qozondan olinadi, shuning uchun jadvalda alohida qator emas,
+  // pastdagi "Osh (umumiy qozon)" kartasida bitta hisob sifatida ko'rsatiladi.
+  const soldByProduct = products.filter(p => p.unit_type !== 'hissa').map(p => {
     const shiftOrderIds = shiftOrders.map(o => o.id)
     const sold = orderItems.filter(oi => oi.product_id === p.id && shiftOrderIds.includes(oi.order_id)).reduce((s, oi) => s + oi.qty, 0)
     const stock = stocks.find(s => s.product_id === p.id)
@@ -299,13 +310,21 @@ export default function AdminPage() {
     const autoIn = toPortions(p, shiftIns.filter(si => si.source === 'auto_extra').reduce((s, si) => s + si.qty, 0), 'ceil')
     const realInitial = (stock?.initial_qty || 0) + smenaChiqim
     const totalChiqim = smenaChiqim + oddiyChiqim
-    if (p.unit_type === 'hissa') {
-      const remaining = Math.floor(oshHissa / (p.hissa_per_unit || 3))
-      return { ...p, sold, writeOff: totalChiqim, stockIn, autoIn, remaining, initial: realInitial }
-    }
     const remaining = realInitial + stockIn - sold - totalChiqim
     return { ...p, sold, writeOff: totalChiqim, stockIn, autoIn, remaining, initial: realInitial }
   }).filter(p => p.sold > 0 || p.writeOff > 0 || p.stockIn > 0 || p.initial > 0)
+
+  const sinceShift = <T extends { created_at: string }>(rows: T[]) =>
+    shift ? rows.filter(r => new Date(r.created_at) >= new Date(shift.opened_at)) : []
+  const shiftOrderIdSet = new Set(shiftOrders.map(o => o.id))
+  const osh = summarizeOsh({
+    products: products.filter(p => p.unit_type === 'hissa').map(p => ({ id: p.id, name: p.name, hissa_per_unit: p.hissa_per_unit, kg_to_hissa: p.kg_to_hissa })),
+    initialQty: Object.fromEntries(stocks.map(st => [st.product_id, st.initial_qty])),
+    stockIns: sinceShift(stockIns),
+    soldItems: orderItems.filter(oi => shiftOrderIdSet.has(oi.order_id)),
+    writeOffs: sinceShift(writeOffs),
+    poolHissa: oshHissa,
+  })
 
   const filteredDebtors = debtors.filter(d =>
     d.name.toLowerCase().includes(debtorSearch.toLowerCase()) || (d.phone || '').includes(debtorSearch)
@@ -357,6 +376,20 @@ export default function AdminPage() {
       doc.text(String(p.sold), 132, y); doc.text(String(p.writeOff), 152, y)
       doc.text(String(p.remaining), 172, y); y += 6
     })
+    if (osh.hasActivity) {
+      y += 4
+      if (y > 250) { doc.addPage(); y = 20 }
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
+      doc.text('Osh (umumiy qozon, hissa hisobida):', 20, y); y += 6
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9)
+      const oshLines = [
+        `Boshlangich: ${osh.initial} | Kirim: +${osh.kirimHissa} (${osh.kirimKg} kg) | Avto-kirim: +${osh.auto}`,
+        `Sotildi: -${osh.soldHissa}${osh.sold.length ? ' (' + osh.sold.map(x => `${x.name} ${x.qty} ta`).join(', ') + ')' : ''} | Chiqim: -${osh.writeOff}`,
+        `Qoldiq: ${osh.remaining} hissa${osh.portions.length ? ' (' + osh.portions.map(x => `${x.name} ${x.qty} ta`).join(' yoki ') + ')' : ''}`,
+      ]
+      if (osh.unexplained !== 0) oshLines.push(`Hisobda farq: ${osh.unexplained > 0 ? '+' : ''}${osh.unexplained} hissa (yozuvsiz harakat)`)
+      oshLines.forEach(l => { doc.text(l.slice(0, 110), 22, y); y += 5 })
+    }
     doc.setFontSize(8); doc.setTextColor(150)
     doc.text('Zarafshon Dasturchilari | EA Muruntov POS', 105, 285, { align: 'center' })
     doc.save(`ea-muruntov-${new Date().toLocaleDateString('ru-RU').replace(/\./g, '-')}.pdf`)
@@ -491,22 +524,40 @@ export default function AdminPage() {
               </div>
             )}
 
-            {oshHissa > 0 && (
-              <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
-                <div style={{padding:'12px 16px', borderBottom:'1px solid #f3f4f6', fontWeight:900, fontSize:'14px'}}>Osh qoldigi</div>
-                <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'8px', padding:'16px'}}>
-                  <div style={{textAlign:'center'}}>
-                    <div style={{fontSize:'20px', fontWeight:900, color:'#C8860A'}}>{oshHissa}</div>
-                    <div style={{fontSize:'11px', color:'#9ca3af', marginTop:'2px'}}>Hissa</div>
+            {osh.hasActivity && (
+              <div data-testid="osh-card" style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
+                <div style={{padding:'12px 16px', borderBottom:'1px solid #f3f4f6'}}>
+                  <div style={{fontWeight:900, fontSize:'14px'}}>Osh (umumiy qozon)</div>
+                  <div style={{fontSize:'11px', color:'#9ca3af', marginTop:'2px'}}>Butun va yarim bitta qozondan olinadi, hisob hissa bilan yuritiladi</div>
+                </div>
+                <div style={{padding:'8px 16px'}}>
+                  {[
+                    { label: "Boshlang'ich", val: String(osh.initial), color: '#6b7280', note: osh.discarded > 0 ? `${osh.discarded} hissa smena boshida tashlangan` : '' },
+                    { label: 'Kirim', val: osh.kirimHissa > 0 ? `+${osh.kirimHissa}` : '—', color: '#16a34a', note: osh.kirimKg > 0 ? `${osh.kirimKg} kg` : '' },
+                    { label: 'Avto-kirim', val: osh.auto > 0 ? `+${osh.auto}` : '—', color: '#d97706', note: osh.auto > 0 ? 'sotuv paytida qozonda yetmagan' : '' },
+                    { label: 'Sotildi', val: osh.soldHissa > 0 ? `-${osh.soldHissa}` : '—', color: '#C8860A', note: osh.sold.map(x => `${x.name} ${x.qty} ta`).join(' · ') },
+                    { label: 'Chiqim', val: osh.writeOff > 0 ? `-${osh.writeOff}` : '—', color: '#ef4444', note: '' },
+                  ].map(r => (
+                    <div key={r.label} style={{display:'flex', alignItems:'baseline', gap:'8px', padding:'6px 0', borderBottom:'1px solid #f9fafb', fontSize:'13px'}}>
+                      <div style={{width:'92px', color:'#6b7280', fontWeight:700, flexShrink:0}}>{r.label}</div>
+                      <div style={{width:'56px', textAlign:'right', fontWeight:900, color:r.color, flexShrink:0}}>{r.val}</div>
+                      <div style={{flex:1, fontSize:'11px', color:'#9ca3af'}}>{r.note}</div>
+                    </div>
+                  ))}
+                  <div style={{display:'flex', alignItems:'baseline', gap:'8px', padding:'10px 0 6px', fontSize:'14px'}}>
+                    <div style={{width:'92px', fontWeight:900}}>Qoldiq</div>
+                    <div style={{width:'56px', textAlign:'right', fontWeight:900, color:'#1A1208', flexShrink:0}}>{osh.remaining}</div>
+                    <div style={{flex:1, fontSize:'11px', color:'#6b7280'}}>
+                      hissa = {osh.portions.map(x => `${x.qty} ta ${x.name.toLowerCase()}`).join(' yoki ')}
+                    </div>
                   </div>
-                  <div style={{textAlign:'center', borderLeft:'1px solid #f3f4f6', borderRight:'1px solid #f3f4f6'}}>
-                    <div style={{fontSize:'20px', fontWeight:900, color:'#16a34a'}}>{Math.floor(oshHissa / 3)}</div>
-                    <div style={{fontSize:'11px', color:'#9ca3af', marginTop:'2px'}}>Butun</div>
-                  </div>
-                  <div style={{textAlign:'center'}}>
-                    <div style={{fontSize:'20px', fontWeight:900, color:'#2563eb'}}>{Math.floor(oshHissa / 2)}</div>
-                    <div style={{fontSize:'11px', color:'#9ca3af', marginTop:'2px'}}>Yarim</div>
-                  </div>
+                  {osh.unexplained !== 0 && (
+                    <div style={{marginTop:'4px', marginBottom:'8px', backgroundColor:'#fffbeb', border:'1px solid #fde68a', borderRadius:'10px', padding:'8px 10px', fontSize:'11px', color:'#92400e', lineHeight:1.5}}>
+                      {osh.unexplained > 0
+                        ? `${osh.unexplained} hissa yozuvsiz sotilgan: osh "Cheksiz" rejimida bo'lganda yoki kirim kiritilmasdan sotilgan.`
+                        : `Qozonda hisobdan ${-osh.unexplained} hissa kam: yozilmagan chiqim bo'lishi mumkin.`}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -555,7 +606,7 @@ export default function AdminPage() {
                   <div key={si.id} style={{display:'flex', alignItems:'center', padding:'12px 16px', borderBottom:'1px solid #f9fafb'}}>
                     <div style={{flex:1, fontSize:'12px'}}>
                       <div style={{fontWeight:700}}>
-                        {productName(si.product_id)} — {si.qty} ta
+                        {productName(si.product_id)} — {stockInLabel(si)}
                         {si.source === 'auto_extra' && <span style={{marginLeft:'6px', fontSize:'10px', backgroundColor:'#fef3c7', color:'#b45309', padding:'1px 6px', borderRadius:'999px'}}>avto</span>}
                       </div>
                       <div style={{color:'#9ca3af'}}>{workerName(si.worker_id)}</div>
