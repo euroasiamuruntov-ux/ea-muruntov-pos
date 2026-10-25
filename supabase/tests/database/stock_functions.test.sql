@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(39);
+select plan(48);
 
 -- ---------------------------------------------------------------------------
 -- Sinov ma'lumotlari
@@ -178,6 +178,46 @@ select throws_ok(
   $$select add_write_off('00000000-0000-0000-0000-0000000005f1', '00000000-0000-0000-0000-0000000000a1',
       '00000000-0000-0000-0000-000000000b04', 1.5, 'sinov')$$,
   'P0001', 'BAD_QTY', 'chiqimda kasr rad etiladi');
+
+-- ---------------------------------------------------------------------------
+-- Osh kirimi porsiya bilan (butun/yarim): add_osh_portions
+-- ---------------------------------------------------------------------------
+insert into shifts (id, opened_by, is_open) values
+  ('00000000-0000-0000-0000-0000000005f3', '00000000-0000-0000-0000-0000000000a1', true),
+  ('00000000-0000-0000-0000-0000000005f4', '00000000-0000-0000-0000-0000000000a1', true);
+insert into osh_stock (shift_id, product_group, total_hissa) values
+  ('00000000-0000-0000-0000-0000000005f3', 'osh', 0);
+
+select is((select (add_osh_portions('00000000-0000-0000-0000-0000000005f3', '00000000-0000-0000-0000-0000000000a1',
+      '[{"product_id":"00000000-0000-0000-0000-000000000b04","qty":5},{"product_id":"00000000-0000-0000-0000-000000000b05","qty":4}]'))->>'hissa'),
+  '23', '5 butun (15) + 4 yarim (8) = 23 hissa');
+select is((select total_hissa::numeric from osh_stock where shift_id = '00000000-0000-0000-0000-0000000005f3'), 23::numeric,
+  'qozon porsiya kirimidan keyin 23 hissa');
+select is((select sum(round(qty * 21)) from stock_ins where shift_id = '00000000-0000-0000-0000-0000000005f3'), 23::numeric,
+  'kirim qatorlari kg ko''rinishida yozilgan, hissaga aniq qaytadi');
+select is((select balance from shift_balances('00000000-0000-0000-0000-0000000005f3')
+           where product_id = '00000000-0000-0000-0000-000000000b05'), 11::numeric, '23 hissa = 11 yarim');
+select is((select balance from shift_balances('00000000-0000-0000-0000-0000000005f3')
+           where product_id = '00000000-0000-0000-0000-000000000b04'), 7::numeric, '23 hissa = 7 butun');
+
+select throws_ok(
+  $$select add_osh_portions('00000000-0000-0000-0000-0000000005f3', '00000000-0000-0000-0000-0000000000a1',
+      '[{"product_id":"00000000-0000-0000-0000-000000000b01","qty":2}]')$$,
+  'P0001', 'NOT_OSH', 'osh bo''lmagan mahsulotga porsiya kirimi rad etiladi');
+select throws_ok(
+  $$select add_osh_portions('00000000-0000-0000-0000-0000000005f3', '00000000-0000-0000-0000-0000000000a1',
+      '[{"product_id":"00000000-0000-0000-0000-000000000b04","qty":1.5}]')$$,
+  'P0001', 'BAD_QTY', 'porsiya soni butun bo''lishi kerak');
+select throws_ok(
+  $$select add_osh_portions('00000000-0000-0000-0000-0000000005f2', '00000000-0000-0000-0000-0000000000a1',
+      '[{"product_id":"00000000-0000-0000-0000-000000000b04","qty":1}]')$$,
+  'P0001', 'SHIFT_CLOSED', 'yopiq smenaga kirim yozilmaydi');
+
+-- Qozon yozuvi bo'lmagan smenada ham ishlaydi; 7 butun aynan 1 kg
+select add_osh_portions('00000000-0000-0000-0000-0000000005f4', '00000000-0000-0000-0000-0000000000a1',
+  '[{"product_id":"00000000-0000-0000-0000-000000000b04","qty":7}]');
+select is((select qty from stock_ins where shift_id = '00000000-0000-0000-0000-0000000005f4'), 1::numeric,
+  '7 butun = 21 hissa = aynan 1 kg (qozon yozuvi yo''q smenada ham)');
 
 select * from finish();
 rollback;

@@ -64,7 +64,9 @@ export function summarizeOsh(input: {
     else { kirimHissa += hissa; kirimKg += Number(si.qty) }
   }
 
-  const sold = products
+  // Ko'rsatishda katta porsiya (butun) birinchi
+  const ordered = [...products].sort((a, b) => hps(b) - hps(a))
+  const sold = ordered
     .map(p => {
       const qty = mine(soldItems).filter(i => i.product_id === p.id).reduce((s, i) => s + Number(i.qty), 0)
       return { id: p.id, name: p.name, qty, hissa: qty * hps(p) }
@@ -94,8 +96,55 @@ export function summarizeOsh(input: {
     soldHissa,
     writeOff,
     remaining,
-    portions: products.map(p => ({ id: p.id, name: p.name, qty: Math.floor(remaining / hps(p)) })),
+    portions: ordered.map(p => ({ id: p.id, name: p.name, qty: Math.floor(remaining / hps(p)) })),
     unexplained: remaining - expected,
     hasActivity: initial > 0 || discarded > 0 || kirimHissa > 0 || auto > 0 || soldHissa > 0 || writeOff > 0 || remaining > 0,
   }
+}
+
+// ---------------------------------------------------------------------------
+// Ko'rsatish: foydalanuvchiga "hissa" ko'rsatilmaydi, faqat kg va porsiya (butun/yarim)
+// ---------------------------------------------------------------------------
+
+const bySizeDesc = (products: OshProduct[]) => [...products].sort((a, b) => hps(b) - hps(a))
+
+/** "Osh (butun)" -> "butun", "Osh yarim" -> "yarim" */
+export function portionLabel(p: OshProduct): string {
+  const short = p.name.replace(/osh/gi, '').replace(/[()]/g, '').trim().toLowerCase()
+  return short || p.name.toLowerCase()
+}
+
+export function kgOfHissa(hissa: number, products: OshProduct[]): number {
+  return hissa / (products.length ? kgHissa(products[0]) : 21)
+}
+
+/** 21 -> "1 kg", 3 -> "0.14 kg" */
+export function formatKg(hissa: number, products: OshProduct[]): string {
+  return `${Number(kgOfHissa(hissa, products).toFixed(2))} kg`
+}
+
+/** Porsiyalarga ajratadi: 20 -> "6 butun + 1 yarim" (kattasidan boshlab) */
+export function formatPortions(hissa: number, products: OshProduct[]): string {
+  let rest = Math.round(hissa)
+  const parts: string[] = []
+  for (const p of bySizeDesc(products)) {
+    const n = Math.floor(rest / hps(p))
+    if (n > 0) { parts.push(`${n} ${portionLabel(p)}`); rest -= n * hps(p) }
+  }
+  return parts.length ? parts.join(' + ') : '0'
+}
+
+/** Faqat bir xil porsiyada: 21 -> "7 butun yoki 10 yarim" */
+export function formatEquivalents(hissa: number, products: OshProduct[]): string {
+  return bySizeDesc(products).map(p => `${Math.floor(hissa / hps(p))} ${portionLabel(p)}`).join(' yoki ')
+}
+
+/** Porsiya sonlaridan hissa: [{product, qty}] */
+export function portionsToHissa(items: { product: OshProduct; qty: number }[]): number {
+  return items.reduce((s, i) => s + i.qty * hps(i.product), 0)
+}
+
+/** Kg dan hissa (kirim oynasidagi ko'rinish uchun) */
+export function hissaFromKg(kg: number, product: OshProduct): number {
+  return Math.round(kg * kgHissa(product))
 }

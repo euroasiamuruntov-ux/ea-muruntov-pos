@@ -10,6 +10,7 @@ Foydalanuvchi sinovlari va takliflari asosida. Holat: ✅ tayyor · 🔧 jarayon
 | 2 | Cheksiz taom | ✅ sotiladi (kutilgandek) |
 | 3 | Yumshoq taom, qoldiq 0 | ✅ sotiladi, avto-kirim yoziladi |
 | 4 | Rahbar → Hisobot → Mahsulot hisobi (osh) | ✅ tuzatildi: butun va yarim bitta "Osh (umumiy qozon)" kartasida ko'rsatiladi |
+| 5 | Osh hisobotida "hissa" tushunarsiz | ✅ hisobot kg va butun/yarim bilan; kirimni kg yoki porsiya (butun/yarim) bilan kiritish mumkin |
 
 ## Rahbar paneli
 
@@ -17,7 +18,7 @@ Foydalanuvchi sinovlari va takliflari asosida. Holat: ✅ tayyor · 🔧 jarayon
 - 📋 **Menyu: mahsulotni tahrirlash.** Nom, narx, kategoriya, qoldiq rejimi, "tugaganda yashir" bitta joyda (hozir tahrirlash yo'q, faqat qo'shish/o'chirish).
 - 📋 **Hisobot va Tarix: bo'limlarni yig'ish/yoyish.** Har bo'lim (moliya, mahsulot hisobi, osh, chiqimlar, kirimlar, izohlar) bosilganda ochiladi/yopiladi.
 - 📋 **Hisobot: davr tanlash.** Qaysi ma'lumot qaysi davr uchun kerakligini tanlash (smena, kun, hafta, oy). Kam ishlatiladigan hisobotlar tugmalar orqali ochiladi, asosiy sahifa sodda qoladi.
-- 📋 **Tarix: osh ham bitta qozon sifatida.** Hozir faqat Hisobot tabida tuzatilgan.
+- ✅ **Tarix: osh ham bitta qozon sifatida** (kg va butun/yarim bilan), Hisobot tabi bilan bir xil.
 
 ## Kassir paneli
 

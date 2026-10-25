@@ -10,6 +10,7 @@ import {
   type Balances, type NewOrderExtra, type StockLevel, type StockMode,
 } from '@/lib/stock'
 import { friendlyError } from '@/lib/errors'
+import { formatEquivalents, formatKg, hissaFromKg, portionLabel, portionsToHissa } from '@/lib/osh'
 
 const LEVEL_STYLE: Record<StockLevel, string> = {
   ok: 'text-green-600', low: 'text-orange-500', empty: 'text-red-500', extra: 'text-amber-600', muted: 'text-gray-400',
@@ -76,6 +77,8 @@ export default function CashierPage() {
 
   const [selectedProd, setSelectedProd] = useState('')
   const [qty, setQty] = useState('')
+  const [kirimMode, setKirimMode] = useState<'kg' | 'portion'>('kg')
+  const [portionQty, setPortionQty] = useState<{[productId: string]: string}>({})
   const [reason, setReason] = useState('')
   const [moslashuvSumma, setMoslashuvSumma] = useState('')
   const [moslashuvActual, setMoslashuvActual] = useState<number | null>(null)
@@ -144,7 +147,15 @@ export default function CashierPage() {
     return true
   }
 
-  const openKirimFor = (p: Product) => { setSelectedProd(p.id); setQty(''); setActiveModal('kirим') }
+  const openKirimFor = (p: Product) => {
+    setSelectedProd(p.id); setQty(''); setPortionQty({})
+    setKirimMode(p.unit_type === 'hissa' ? 'portion' : 'kg')
+    setActiveModal('kirим')
+  }
+
+  // Osh mahsulotlari (butun, yarim): kattasidan boshlab
+  const oshProducts = products.filter(p => p.unit_type === 'hissa').sort((a, b) => b.hissa_per_unit - a.hissa_per_unit)
+  const portionItems = oshProducts.map(p => ({ product: p, qty: parseInt(portionQty[p.id] || '0') || 0 })).filter(i => i.qty > 0)
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 2500) }
   const fmt = (n: number) => n.toLocaleString('uz-UZ')
@@ -377,25 +388,38 @@ export default function CashierPage() {
   }
 
   const confirmKirim = async () => {
-    if (!selectedProd || !qty || !shift || busy.current) return
+    if (!selectedProd || !shift || busy.current) return
     const prod = products.find(p => p.id === selectedProd)
+    if (!prod) return
+    const byPortion = prod.unit_type === 'hissa' && kirimMode === 'portion'
     const entered = parseFloat(qty)
-    const savedQty = prod?.litr_per_unit ? Math.floor(entered / prod.litr_per_unit) : entered
-    if (!prod || !(savedQty > 0)) { showToast("Miqdor noto'g'ri"); return }
+    const savedQty = prod.litr_per_unit ? Math.floor(entered / prod.litr_per_unit) : entered
+    if (byPortion ? portionItems.length === 0 : !(savedQty > 0)) { showToast("Miqdor noto'g'ri"); return }
     busy.current = true
     setLoading(true)
     try {
       const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
-      const { data, error } = await supabase.rpc('add_stock_in', {
-        p_shift_id: shift.id, p_worker_id: u.id, p_product_id: selectedProd, p_qty: savedQty,
-      })
+      const { data, error } = byPortion
+        ? await supabase.rpc('add_osh_portions', {
+            p_shift_id: shift.id, p_worker_id: u.id,
+            p_items: portionItems.map(i => ({ product_id: i.product.id, qty: i.qty })),
+          })
+        : await supabase.rpc('add_stock_in', {
+            p_shift_id: shift.id, p_worker_id: u.id, p_product_id: selectedProd, p_qty: savedQty,
+          })
       if (error) { showToast(friendlyError(error)); return }
-      const madeAvailable = (data as { made_available?: boolean }).made_available
-      if (madeAvailable) setProducts(prev => prev.map(p => p.id === selectedProd ? { ...p, is_available: true } : p))
+
+      // "Yo'q" qilingan mahsulotga kirim kelsa, baza uni avtomatik "Bor" qiladi
+      const ids = byPortion ? portionItems.map(i => i.product.id) : [selectedProd]
+      const madeAvailable = byPortion ? portionItems.some(i => !i.product.is_available) : !!(data as { made_available?: boolean }).made_available
+      if (madeAvailable) setProducts(prev => prev.map(p => ids.includes(p.id) ? { ...p, is_available: true } : p))
       await loadBalances(shift.id)
-      const kirimText = prod.litr_per_unit ? `${entered}L = ${savedQty} stakan kirim!` : 'Kirim qilindi!'
-      showToast(madeAvailable ? `${kirimText} "${prod.name}" menuga qo'shildi.` : kirimText)
-      setSelectedProd(''); setQty(''); setActiveModal(null)
+
+      const kirimText = byPortion
+        ? `Kirim qilindi: ${portionItems.map(i => `${i.qty} ${portionLabel(i.product)}`).join(' + ')}`
+        : prod.litr_per_unit ? `${entered}L = ${savedQty} stakan kirim!` : 'Kirim qilindi!'
+      showToast(madeAvailable && !byPortion ? `${kirimText} "${prod.name}" menuga qo'shildi.` : kirimText)
+      setSelectedProd(''); setQty(''); setPortionQty({}); setActiveModal(null)
     } finally {
       busy.current = false
       setLoading(false)
@@ -767,9 +791,9 @@ export default function CashierPage() {
           <div className="bg-white rounded-t-3xl p-6 w-full max-w-md">
             <div className="flex justify-between items-center mb-4">
               <div className="font-black text-lg text-[#1E7B47]">Mahsulot kirim</div>
-              <button onClick={() => { setActiveModal(null); setSelectedProd(''); setQty('') }} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">x</button>
+              <button onClick={() => { setActiveModal(null); setSelectedProd(''); setQty(''); setPortionQty({}) }} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">x</button>
             </div>
-            <select value={selectedProd} onChange={e => { setSelectedProd(e.target.value); setQty('') }} className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-3 outline-none focus:border-[#C8860A] bg-white">
+            <select value={selectedProd} onChange={e => { setSelectedProd(e.target.value); setQty(''); setPortionQty({}) }} className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-3 outline-none focus:border-[#C8860A] bg-white">
               <option value="">Mahsulot tanlang</option>
               {products.map(p => <option key={p.id} value={p.id}>{p.name}{!p.is_available ? ' (Yo\'q)' : ''}</option>)}
             </select>
@@ -778,12 +802,39 @@ export default function CashierPage() {
               if (!prod) return null
               if (prod.unit_type === 'hissa') return (
                 <div>
-                  <input type="number" placeholder="Miqdor (kg)" value={qty} onChange={e => setQty(e.target.value)} className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-2 outline-none focus:border-[#C8860A]"/>
-                  {qty && parseFloat(qty) > 0 && (
-                    <div className="bg-[#FFF8E7] border border-[#F5C842] rounded-xl px-4 py-3 text-sm mb-3">
-                      <div className="font-bold text-[#C8860A] mb-1">{parseFloat(qty)} kg:</div>
-                      <div className="flex gap-4"><span className="text-green-600">Butun: <b>{Math.floor(parseFloat(qty) * 7)}</b></span><span className="text-blue-600">Yarim: <b>{Math.floor(parseFloat(qty) * 21 / 2)}</b></span></div>
-                    </div>
+                  <div className="flex bg-gray-100 rounded-xl p-1 gap-1 mb-3">
+                    {([['kg', 'Kg bilan'], ['portion', 'Porsiya bilan']] as const).map(([mode, label]) => (
+                      <button key={mode} type="button" onClick={() => setKirimMode(mode)}
+                        className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${kirimMode === mode ? 'bg-[#C8860A] text-[#1A1208]' : 'text-gray-500'}`}>{label}</button>
+                    ))}
+                  </div>
+                  {kirimMode === 'kg' ? (
+                    <>
+                      <input type="number" placeholder="Miqdor (kg)" value={qty} onChange={e => setQty(e.target.value)} className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-2 outline-none focus:border-[#C8860A]"/>
+                      {qty && parseFloat(qty) > 0 && (
+                        <div className="bg-[#FFF8E7] border border-[#F5C842] rounded-xl px-4 py-3 text-sm mb-3">
+                          <span className="font-bold text-[#C8860A]">{parseFloat(qty)} kg</span> = <b>{formatEquivalents(hissaFromKg(parseFloat(qty), prod), oshProducts)}</b>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex gap-2 mb-2">
+                        {oshProducts.map(p => (
+                          <label key={p.id} className="flex-1">
+                            <div className="text-xs font-bold text-gray-500 mb-1"><span className="capitalize">{portionLabel(p)}</span> (ta)</div>
+                            <input type="number" min={0} placeholder="0" aria-label={`${portionLabel(p)} porsiya soni`} value={portionQty[p.id] || ''}
+                              onChange={e => setPortionQty(prev => ({ ...prev, [p.id]: e.target.value }))}
+                              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-lg font-black text-center outline-none focus:border-[#C8860A]"/>
+                          </label>
+                        ))}
+                      </div>
+                      {portionItems.length > 0 && (
+                        <div className="bg-[#FFF8E7] border border-[#F5C842] rounded-xl px-4 py-3 text-sm mb-3">
+                          <b>{portionItems.map(i => `${i.qty} ${portionLabel(i.product)}`).join(' + ')}</b> = <span className="font-bold text-[#C8860A]">{formatKg(portionsToHissa(portionItems), oshProducts)}</span>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               )
@@ -808,7 +859,7 @@ export default function CashierPage() {
                 </div>
               )
             })()}
-            <button onClick={confirmKirim} disabled={loading || !selectedProd || !qty} className="w-full py-4 rounded-xl bg-[#1E7B47] text-white font-black text-base disabled:opacity-50">{loading ? '...' : 'Kirim qilish'}</button>
+            <button onClick={confirmKirim} disabled={loading || !selectedProd || (products.find(p => p.id === selectedProd)?.unit_type === 'hissa' && kirimMode === 'portion' ? portionItems.length === 0 : !qty)} className="w-full py-4 rounded-xl bg-[#1E7B47] text-white font-black text-base disabled:opacity-50">{loading ? '...' : 'Kirim qilish'}</button>
           </div>
         </div>
       )}
