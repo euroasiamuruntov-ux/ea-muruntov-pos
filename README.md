@@ -16,6 +16,10 @@
 
 ---
 
+> **Ishlab chiquvchilar uchun:** lokal sinov bazasi, testlar va jonli bazaga o'tkazish tartibi — [docs/DEPLOY.md](docs/DEPLOY.md).
+
+---
+
 ## 👤 Kirish ma'lumotlari
 
 | Rol | Kirish usuli | Yo'nalish |
