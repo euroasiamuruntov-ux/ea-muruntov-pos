@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { clearStoredUser, getStoredUser } from '@/lib/session'
-import { BarChart3, Clock, LogOut, Search, UtensilsCrossed, Users } from 'lucide-react'
+import { BarChart3, Clock, LogOut, Search, Settings, UtensilsCrossed, Users } from 'lucide-react'
 import DebtorCard from '../cashier/components/DebtorCard'
 import { formatKg, portionLabel } from '@/lib/osh'
 import { buildShiftReport, oshProductsOf } from '@/lib/report'
@@ -13,9 +13,10 @@ import type { Category, Debtor, Order, OrderItem, Product, Shift, ShiftStock, St
 import MenuTab from './components/MenuTab'
 import ReportTab from './components/ReportTab'
 import HistoryTab from './components/HistoryTab'
+import SettingsTab from './components/SettingsTab'
 
 type User = { id: string; name: string; role: string }
-type Tab = 'hisobot' | 'tarix' | 'qarzdorlar' | 'mahsulot' | 'xodim'
+type Tab = 'hisobot' | 'tarix' | 'qarzdorlar' | 'mahsulot' | 'xodim' | 'sozlama'
 
 export default function AdminPage() {
   const router = useRouter()
@@ -146,6 +147,7 @@ export default function AdminPage() {
     { id: 'qarzdorlar', label: 'Qarzlar', icon: <Search size={20}/> },
     { id: 'mahsulot', label: 'Menyu', icon: <UtensilsCrossed size={20}/> },
     { id: 'xodim', label: 'Xodim', icon: <Users size={20}/> },
+    { id: 'sozlama', label: 'Sozlama', icon: <Settings size={20}/> },
   ]
 
   return (
@@ -233,6 +235,8 @@ export default function AdminPage() {
             </div>
           </div>
         )}
+
+        {activeTab === 'sozlama' && <SettingsTab showToast={showToast} onPurged={loadAll} />}
       </div>
 
       {/* Pastki menyu */}

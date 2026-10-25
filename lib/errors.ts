@@ -27,6 +27,7 @@ export function friendlyError(err: DbError): string {
     case 'REASON_REQUIRED': return "Izoh yozish majburiy."
     case 'NOTE_REQUIRED': return `Tizimdagi qoldiqdan farq bor, izoh yozing: ${err.details || 'mahsulotlar'}.`
     case 'OVERPAY': return `To'lov qarzdan ko'p. Qarz: ${err.details ? Number(err.details).toLocaleString('uz-UZ') + " so'm" : 'kamroq'}.`
+    case 'WRONG_PIN': return "Parol noto'g'ri."
     case 'NOT_OSH': return `${name} osh emas, porsiya bilan kirim qilib bo'lmaydi.`
     default: return `Xatolik: ${err.message || "noma'lum"}`
   }
