@@ -5,6 +5,9 @@ select plan(48);
 -- ---------------------------------------------------------------------------
 -- Sinov ma'lumotlari
 -- ---------------------------------------------------------------------------
+-- Bir vaqtda faqat bitta ochiq smena bo'lishi mumkin (one_open_shift indeksi)
+update shifts set is_open = false where is_open;
+
 insert into users (id, name, pin, role) values
   ('00000000-0000-0000-0000-0000000000a1', 'Kassir', '1111', 'worker');
 
@@ -182,9 +185,9 @@ select throws_ok(
 -- ---------------------------------------------------------------------------
 -- Osh kirimi porsiya bilan (butun/yarim): add_osh_portions
 -- ---------------------------------------------------------------------------
+update shifts set is_open = false where id = '00000000-0000-0000-0000-0000000005f1';
 insert into shifts (id, opened_by, is_open) values
-  ('00000000-0000-0000-0000-0000000005f3', '00000000-0000-0000-0000-0000000000a1', true),
-  ('00000000-0000-0000-0000-0000000005f4', '00000000-0000-0000-0000-0000000000a1', true);
+  ('00000000-0000-0000-0000-0000000005f3', '00000000-0000-0000-0000-0000000000a1', true);
 insert into osh_stock (shift_id, product_group, total_hissa) values
   ('00000000-0000-0000-0000-0000000005f3', 'osh', 0);
 
@@ -214,6 +217,9 @@ select throws_ok(
   'P0001', 'SHIFT_CLOSED', 'yopiq smenaga kirim yozilmaydi');
 
 -- Qozon yozuvi bo'lmagan smenada ham ishlaydi; 7 butun aynan 1 kg
+update shifts set is_open = false where id = '00000000-0000-0000-0000-0000000005f3';
+insert into shifts (id, opened_by, is_open) values
+  ('00000000-0000-0000-0000-0000000005f4', '00000000-0000-0000-0000-0000000000a1', true);
 select add_osh_portions('00000000-0000-0000-0000-0000000005f4', '00000000-0000-0000-0000-0000000000a1',
   '[{"product_id":"00000000-0000-0000-0000-000000000b04","qty":7}]');
 select is((select qty from stock_ins where shift_id = '00000000-0000-0000-0000-0000000005f4'), 1::numeric,
