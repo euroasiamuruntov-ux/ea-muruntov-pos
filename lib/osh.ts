@@ -1,3 +1,5 @@
+import { isStartDiscard } from './discard'
+
 // Osh hisobi. Butun va yarim osh BITTA umumiy qozondan olinadi (hissa bilan hisoblanadi),
 // shuning uchun hisobotda ularni alohida mahsulot qatorlari sifatida emas, bitta qozon sifatida
 // ko'rsatamiz: boshlang'ich + kirim + avto-kirim - sotildi - chiqim = qoldiq.
@@ -27,8 +29,6 @@ export type OshSummary = {
   /** Hisobotda ko'rsatishga arziydimi */
   hasActivity: boolean
 }
-
-const SMENA_BOSHI = 'Smena boshida chiqindi'
 
 const hps = (p: OshProduct) => p.hissa_per_unit || 1
 const kgHissa = (p: OshProduct) => p.kg_to_hissa || 21
@@ -78,7 +78,7 @@ export function summarizeOsh(input: {
   let discarded = 0
   for (const w of mine(writeOffs)) {
     const hissa = Number(w.qty) * hps(byId.get(w.product_id)!)
-    if (w.reason === SMENA_BOSHI) discarded += hissa
+    if (isStartDiscard(w.reason)) discarded += hissa
     else writeOff += hissa
   }
 

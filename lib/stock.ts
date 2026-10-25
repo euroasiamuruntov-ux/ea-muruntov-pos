@@ -80,10 +80,10 @@ export function isVisible(
 export type StockLevel = 'ok' | 'low' | 'empty' | 'extra' | 'muted'
 export type StockInfo = { level: StockLevel; text: string }
 
-/** Kartadagi qoldiq yozuvi. null - hech narsa ko'rsatilmaydi. */
+/** Kartadagi qoldiq yozuvi. */
 export function stockInfo(mode: StockMode, balance: number, unit = 'ta'): StockInfo | null {
   const b = availableQty(balance)
-  if (mode === 'none') return b > 0 ? { level: 'muted', text: `~${b} ${unit}` } : null
+  if (mode === 'none') return b > 0 ? { level: 'muted', text: `~${b} ${unit}` } : { level: 'muted', text: 'Cheksiz' }
   if (b <= 0) {
     return mode === 'soft'
       ? { level: 'extra', text: 'Tizimda tugagan' }

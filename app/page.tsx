@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Lock } from 'lucide-react'
+import { storeUser } from '@/lib/session'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -28,7 +29,7 @@ export default function LoginPage() {
       setError("Noto'g'ri kod!")
       setPin('')
     } else {
-      localStorage.setItem('pos_user', JSON.stringify(data))
+      storeUser(data)
       router.push('/cashier')
     }
     setLoading(false)
@@ -46,7 +47,7 @@ export default function LoginPage() {
     if (error || !data) {
       setError("Noto'g'ri parol!")
     } else {
-      localStorage.setItem('pos_user', JSON.stringify(data))
+      storeUser(data)
       router.push('/admin')
     }
     setLoading(false)

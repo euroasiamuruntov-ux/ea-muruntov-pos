@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { friendlyError } from '@/lib/errors'
 
 type Debtor = { id: string; name: string; phone: string; total_debt: number }
 type Product = { id: string; name: string }
@@ -28,6 +29,7 @@ export default function DebtorCard({
   const [orders, setOrders] = useState<Order[]>([])
   const [loaded, setLoaded] = useState(false)
   const [paying, setPaying] = useState(false)
+  const [error, setError] = useState('')
 
   const loadHistory = async () => {
     if (loaded) return
@@ -51,27 +53,21 @@ export default function DebtorCard({
     if (next) loadHistory()
   }
 
+  // To'lov bazadagi pay_debt funksiyasida: qarz kamayadi va to'lov tarixi birga yoziladi, ortiqcha to'lov rad etiladi
   const handlePay = async () => {
-    if (!payAmount || parseInt(payAmount) <= 0) return
-    setPaying(true)
     const amount = parseInt(payAmount)
-    const newDebt = Math.max(0, debtor.total_debt - amount)
+    if (!amount || amount <= 0) return
+    if (amount > debtor.total_debt) { setError(`To'lov qarzdan ko'p. Qarz: ${fmt(debtor.total_debt)} so'm`); return }
+    setPaying(true)
+    setError('')
+    const { data, error: rpcError } = await supabase.rpc('pay_debt', { p_debtor_id: debtor.id, p_amount: amount, p_pay_type: payType })
+    setPaying(false)
+    if (rpcError) { setError(friendlyError(rpcError)); return }
 
-    await supabase.from('debtors')
-      .update({ total_debt: newDebt, updated_at: new Date().toISOString() })
-      .eq('id', debtor.id)
-
-    const { data: newPay } = await supabase.from('debt_payments').insert({
-      debtor_id: debtor.id,
-      amount,
-      pay_type: payType,
-      note: `To'lov: ${fmt(amount)} so'm (${payType})`,
-    }).select().single()
-
-    if (newPay) setPayments(prev => [newPay, ...prev])
+    const newDebt = Number((data as { total_debt: number }).total_debt)
+    setPayments(prev => [{ id: crypto.randomUUID(), amount, pay_type: payType, created_at: new Date().toISOString() }, ...prev])
     onUpdate(debtor.id, newDebt)
     setPayAmount('')
-    setPaying(false)
   }
 
   return (
@@ -101,12 +97,13 @@ export default function DebtorCard({
           {/* To'lov qilish */}
           {debtor.total_debt > 0 && (
             <div className="bg-white rounded-xl p-3 space-y-2">
-              <div className="text-xs font-bold text-gray-500">Qarz to'lash:</div>
+              <div className="text-xs font-bold text-gray-500">Qarz to&apos;lash:</div>
               <input
                 type="number"
                 placeholder={`Max: ${fmt(debtor.total_debt)} so'm`}
+                aria-label="To'lov summasi"
                 value={payAmount}
-                onChange={e => setPayAmount(e.target.value)}
+                onChange={e => { setPayAmount(e.target.value); setError('') }}
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-[#C8860A]"
               />
               {/* 4 ta to'lov turi */}
@@ -119,6 +116,7 @@ export default function DebtorCard({
                   </button>
                 ))}
               </div>
+              {error && <div className="text-xs font-bold text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>}
               <button onClick={handlePay} disabled={paying || !payAmount}
                 className="w-full py-2.5 rounded-xl bg-[#1E7B47] text-white font-black text-sm disabled:opacity-50">
                 {paying ? '...' : '✓ To\'lovni tasdiqlash'}
@@ -137,13 +135,13 @@ export default function DebtorCard({
                       {new Date(o.created_at).toLocaleDateString('uz-UZ')} —{' '}
                       {new Date(o.created_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}
                     </span>
-                    <span className="font-black text-red-500">{fmt(o.total)} so'm</span>
+                    <span className="font-black text-red-500">{fmt(o.total)} so&apos;m</span>
                   </div>
                   {o.order_items?.map((oi, i) => {
                     const prod = products.find(p => p.id === oi.product_id)
                     return (
                       <div key={i} className="text-xs text-gray-500 ml-2">
-                        • {prod?.name || 'Noma\'lum'} × {oi.qty} — {fmt(oi.price * oi.qty)} so'm
+                        • {prod?.name || 'Noma\'lum'} × {oi.qty} — {fmt(oi.price * oi.qty)} so&apos;m
                       </div>
                     )
                   })}
@@ -155,7 +153,7 @@ export default function DebtorCard({
           {/* To'lov tarixi */}
           {payments.length > 0 && (
             <div className="bg-white rounded-xl p-3">
-              <div className="text-xs font-bold text-gray-500 mb-2">✅ To'lov tarixi:</div>
+              <div className="text-xs font-bold text-gray-500 mb-2">✅ To&apos;lov tarixi:</div>
               {payments.map((p, i) => (
                 <div key={i} className="flex justify-between items-center py-1.5 border-b border-gray-50 last:border-0">
                   <div>
@@ -165,14 +163,14 @@ export default function DebtorCard({
                       {new Date(p.created_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}
                     </div>
                   </div>
-                  <div className="font-black text-green-600 text-sm">+{fmt(p.amount)} so'm</div>
+                  <div className="font-black text-green-600 text-sm">+{fmt(p.amount)} so&apos;m</div>
                 </div>
               ))}
             </div>
           )}
 
           {orders.length === 0 && payments.length === 0 && loaded && (
-            <div className="text-center text-gray-400 text-xs py-2">Tarix yo'q</div>
+            <div className="text-center text-gray-400 text-xs py-2">Tarix yo&apos;q</div>
           )}
         </div>
       )}

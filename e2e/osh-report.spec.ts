@@ -26,6 +26,12 @@ test('rahbar hisoboti: osh bitta qozon sifatida, raqamlar mos va chalg\'itmaydi'
   await page.getByRole('button', { name: 'Kirish', exact: true }).click()
   await page.waitForURL('**/admin')
 
+  // Asosiy raqamlar tepada ko'rinib turadi, batafsil hisobot bo'lim ortida
+  await expect(page.getByTestId('kpi-osh')).toHaveText('0 kg')
+  await expect(page.getByTestId('kpi-auto')).toContainText('Osh +0.14 kg')
+  await expect(page.getByTestId('osh-card')).toHaveCount(0)
+  await page.getByRole('button', { name: /^Osh \(umumiy qozon\)/ }).click()
+
   const card = page.getByTestId('osh-card')
   await expect(card).toBeVisible()
   // Foydalanuvchiga hissa ko'rsatilmaydi: kg va butun/yarim bilan
@@ -40,6 +46,7 @@ test('rahbar hisoboti: osh bitta qozon sifatida, raqamlar mos va chalg\'itmaydi'
   await expect(card).not.toContainText('qozonda yetmagan')
 
   // Kirimlar ro'yxati: osh kg/hissa bilan, kasr raqam "ta" bo'lib chiqmaydi
+  await page.getByRole('button', { name: /^Kirimlar/ }).click()
   await expect(page.getByText('Osh butun — 1 kg = 7 butun')).toBeVisible()
   await expect(page.getByText('Osh yarim — 0.14 kg = 1 yarim')).toBeVisible()
   await expect(page.locator('body')).not.toContainText('0.1428')
@@ -70,6 +77,7 @@ test('Tarix: yopilgan smenada ham osh bitta kartada, kg va porsiya bilan', async
   await page.waitForURL('**/admin')
   await page.getByRole('button', { name: 'Tarix' }).click()
   await page.getByText('1 buyurtma').click()
+  await page.getByRole('button', { name: /^Osh \(umumiy qozon\)/ }).click()
 
   const card = page.getByTestId('osh-card')
   await expect(card).toBeVisible()

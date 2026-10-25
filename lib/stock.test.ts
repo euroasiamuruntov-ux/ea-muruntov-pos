@@ -69,7 +69,7 @@ describe('stockInfo', () => {
   })
   it('cheksiz: faqat taxminiy qoldiq', () => {
     expect(stockInfo('none', 7)).toEqual({ level: 'muted', text: '~7 ta' })
-    expect(stockInfo('none', 0)).toBeNull()
+    expect(stockInfo('none', 0)).toEqual({ level: 'muted', text: 'Cheksiz' })
   })
   it('birlik nomi (stakan)', () => {
     expect(stockInfo('strict', 9, 'stakan')?.text).toBe('Qoldiq: 9 stakan')
@@ -101,6 +101,10 @@ describe('friendlyError', () => {
   it('bazadagi kodlarni tushunarli qiladi', () => {
     expect(friendlyError({ message: 'STOCK_SHORT', details: 'Cola' })).toContain('"Cola" tugagan')
     expect(friendlyError({ message: 'SHIFT_CLOSED' })).toContain('Smena yopilgan')
+  })
+  it("smena yopish va qarz to'lovi xatolari", () => {
+    expect(friendlyError({ message: 'NOTE_REQUIRED', details: 'Cola, Somsa' })).toContain('izoh yozing: Cola, Somsa')
+    expect(friendlyError({ message: 'OVERPAY', details: '30000' })).toContain("so'm")
   })
   it('internet xatosini aniqlaydi', () => {
     expect(isNetworkError({ message: 'TypeError: Failed to fetch' })).toBe(true)
