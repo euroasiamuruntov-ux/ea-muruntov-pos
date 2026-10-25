@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { clearStoredUser, getStoredUser } from '@/lib/session'
 import { BarChart3, Clock, LogOut, Search, UtensilsCrossed, Users } from 'lucide-react'
 import DebtorCard from '../cashier/components/DebtorCard'
 import { formatKg, portionLabel } from '@/lib/osh'
@@ -38,9 +39,8 @@ export default function AdminPage() {
   const [toast, setToast] = useState('')
 
   useEffect(() => {
-    const u = localStorage.getItem('pos_user')
-    if (!u) { router.push('/'); return }
-    const parsed = JSON.parse(u)
+    const parsed = getStoredUser()
+    if (!parsed) { router.push('/'); return }
     if (parsed.role !== 'owner') { router.push('/cashier'); return }
     setUser(parsed)
     loadAll()
@@ -160,7 +160,7 @@ export default function AdminPage() {
           <div className={`px-3 py-1 rounded-full text-xs font-bold ${shift?.is_open ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/30 text-gray-500'}`}>
             {shift?.is_open ? 'Ochiq' : 'Yopiq'}
           </div>
-          <button type="button" aria-label="Chiqish" onClick={() => { localStorage.removeItem('pos_user'); router.push('/') }}
+          <button type="button" aria-label="Chiqish" onClick={() => { clearStoredUser(); router.push('/') }}
             className="border border-gray-600 text-gray-400 rounded-lg p-2"><LogOut size={14}/></button>
         </div>
       </div>

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Calendar } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { fmt } from '@/lib/format'
+import { isStartDiscard } from '@/lib/discard'
 import { formatKg } from '@/lib/osh'
 import { PERIOD_LABELS, periodRange, type PeriodFilter } from '@/lib/period'
 import { buildShiftReport, oshProductsOf, type ShiftReport } from '@/lib/report'
@@ -18,7 +19,6 @@ type Loaded = { key: string; history: ShiftSummary[]; sales: SaleRow[]; error: s
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })
 const EVENT_ICON: Record<EventRow['type'], string> = { chiqim: '⚠️', ichki: '🍽️', smena_chiqim: '🗑️', avto_kirim: '🍳', farq: '📊' }
-const SMENA_BOSHI = 'Smena boshida chiqindi'
 
 export default function HistoryTab({ products, workers }: { products: Product[]; workers: Worker[] }) {
   const [filter, setFilter] = useState<PeriodFilter>('bugun')
@@ -105,11 +105,11 @@ export default function HistoryTab({ products, workers }: { products: Product[];
     })
 
     const events: EventRow[] = []
-    writeOffs.filter(w => w.reason !== SMENA_BOSHI).forEach(w => events.push({
+    writeOffs.filter(w => !isStartDiscard(w.reason)).forEach(w => events.push({
       type: 'chiqim', text: `${productName(w.product_id)} — ${w.qty} ta chiqim`, izoh: w.reason, xodim: workerName(w.worker_id), vaqt: w.created_at,
     }))
-    writeOffs.filter(w => w.reason === SMENA_BOSHI).forEach(w => events.push({
-      type: 'smena_chiqim', text: `${productName(w.product_id)} — ${w.qty} ta`, izoh: 'Smena boshida chiqindi', xodim: workerName(w.worker_id), vaqt: w.created_at,
+    writeOffs.filter(w => isStartDiscard(w.reason)).forEach(w => events.push({
+      type: 'smena_chiqim', text: `${productName(w.product_id)} — ${w.qty} ta`, izoh: w.reason, xodim: workerName(w.worker_id), vaqt: w.created_at,
     }))
     stockIns.filter(si => si.source === 'auto_extra').forEach(si => events.push({
       type: 'avto_kirim', text: `${productName(si.product_id)} — qo'shimcha tayyorlangan`,

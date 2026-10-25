@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { friendlyError } from '@/lib/errors'
 
 type Debtor = { id: string; name: string; phone: string; total_debt: number }
 type Product = { id: string; name: string }
@@ -28,6 +29,7 @@ export default function DebtorCard({
   const [orders, setOrders] = useState<Order[]>([])
   const [loaded, setLoaded] = useState(false)
   const [paying, setPaying] = useState(false)
+  const [error, setError] = useState('')
 
   const loadHistory = async () => {
     if (loaded) return
@@ -51,27 +53,21 @@ export default function DebtorCard({
     if (next) loadHistory()
   }
 
+  // To'lov bazadagi pay_debt funksiyasida: qarz kamayadi va to'lov tarixi birga yoziladi, ortiqcha to'lov rad etiladi
   const handlePay = async () => {
-    if (!payAmount || parseInt(payAmount) <= 0) return
-    setPaying(true)
     const amount = parseInt(payAmount)
-    const newDebt = Math.max(0, debtor.total_debt - amount)
+    if (!amount || amount <= 0) return
+    if (amount > debtor.total_debt) { setError(`To'lov qarzdan ko'p. Qarz: ${fmt(debtor.total_debt)} so'm`); return }
+    setPaying(true)
+    setError('')
+    const { data, error: rpcError } = await supabase.rpc('pay_debt', { p_debtor_id: debtor.id, p_amount: amount, p_pay_type: payType })
+    setPaying(false)
+    if (rpcError) { setError(friendlyError(rpcError)); return }
 
-    await supabase.from('debtors')
-      .update({ total_debt: newDebt, updated_at: new Date().toISOString() })
-      .eq('id', debtor.id)
-
-    const { data: newPay } = await supabase.from('debt_payments').insert({
-      debtor_id: debtor.id,
-      amount,
-      pay_type: payType,
-      note: `To'lov: ${fmt(amount)} so'm (${payType})`,
-    }).select().single()
-
-    if (newPay) setPayments(prev => [newPay, ...prev])
+    const newDebt = Number((data as { total_debt: number }).total_debt)
+    setPayments(prev => [{ id: crypto.randomUUID(), amount, pay_type: payType, created_at: new Date().toISOString() }, ...prev])
     onUpdate(debtor.id, newDebt)
     setPayAmount('')
-    setPaying(false)
   }
 
   return (
@@ -105,8 +101,9 @@ export default function DebtorCard({
               <input
                 type="number"
                 placeholder={`Max: ${fmt(debtor.total_debt)} so'm`}
+                aria-label="To'lov summasi"
                 value={payAmount}
-                onChange={e => setPayAmount(e.target.value)}
+                onChange={e => { setPayAmount(e.target.value); setError('') }}
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-[#C8860A]"
               />
               {/* 4 ta to'lov turi */}
@@ -119,6 +116,7 @@ export default function DebtorCard({
                   </button>
                 ))}
               </div>
+              {error && <div className="text-xs font-bold text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>}
               <button onClick={handlePay} disabled={paying || !payAmount}
                 className="w-full py-2.5 rounded-xl bg-[#1E7B47] text-white font-black text-sm disabled:opacity-50">
                 {paying ? '...' : '✓ To\'lovni tasdiqlash'}

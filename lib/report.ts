@@ -1,4 +1,5 @@
 // Smena hisoboti: ekran va PDF uchun yagona hisob-kitob (sof funksiyalar).
+import { isStartDiscard } from './discard'
 import { formatKg, summarizeOsh, type OshProduct, type OshSummary } from './osh'
 import type { Order, OrderItem, Product, ShiftStock, StockIn, WriteOff } from './types'
 
@@ -36,7 +37,6 @@ export type ShiftReport = {
   autoItems: string[]
 }
 
-const SMENA_BOSHI = 'Smena boshida chiqindi'
 const sum = (nums: number[]) => nums.reduce((s, n) => s + Number(n), 0)
 
 export function oshProductsOf(products: Product[]): OshProduct[] {
@@ -79,8 +79,8 @@ export function buildShiftReport(input: {
       const sold = sum(soldItems.filter(oi => oi.product_id === p.id).map(oi => oi.qty))
       const initialQty = stocks.find(s => s.product_id === p.id)?.initial_qty || 0
       const wo = writeOffs.filter(w => w.product_id === p.id)
-      const smenaChiqim = sum(wo.filter(w => w.reason === SMENA_BOSHI).map(w => w.qty))
-      const oddiyChiqim = sum(wo.filter(w => w.reason !== SMENA_BOSHI).map(w => w.qty))
+      const smenaChiqim = sum(wo.filter(w => isStartDiscard(w.reason)).map(w => w.qty))
+      const oddiyChiqim = sum(wo.filter(w => !isStartDiscard(w.reason)).map(w => w.qty))
       const ins = stockIns.filter(si => si.product_id === p.id)
       const stockIn = sum(ins.map(si => si.qty))
       const autoIn = sum(ins.filter(si => si.source === 'auto_extra').map(si => si.qty))

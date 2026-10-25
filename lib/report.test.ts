@@ -53,6 +53,15 @@ describe('buildShiftReport: mahsulot hisobi', () => {
     // boshlang'ich 1 + 2 (tashlangan) = 3; kirim 5; sotildi 5; chiqim 3
     expect(r.rows).toEqual([{ id: 'somsa', name: 'Somsa', initial: 3, stockIn: 5, autoIn: 3, sold: 5, writeOff: 3, remaining: 0 }])
   })
+  it("kassir izohi bilan yozilgan 'Smena boshida chiqindi: ...' ham boshlang'ichga qaytariladi", () => {
+    const r = buildShiftReport({
+      products, orders: [], orderItems: [], stocks: [{ product_id: 'cola', initial_qty: 3 }], stockIns: [],
+      writeOffs: [{ id: 'z', product_id: 'cola', qty: 2, reason: 'Smena boshida chiqindi: sinib qolgan', worker_id: 'w', created_at: '' }],
+      poolHissa: 0,
+    })
+    // boshlang'ich 3 + 2 (tashlangan) = 5, chiqim 2, qoldiq 3
+    expect(r.rows).toEqual([{ id: 'cola', name: 'Cola', initial: 5, stockIn: 0, autoIn: 0, sold: 0, writeOff: 2, remaining: 3 }])
+  })
   it("faoliyati yo'q mahsulot qatorda ko'rinmaydi, osh jadvalga kirmaydi", () => {
     expect(r.rows.map(x => x.id)).toEqual(['somsa'])
   })

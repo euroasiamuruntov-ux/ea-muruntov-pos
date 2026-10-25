@@ -102,6 +102,10 @@ describe('friendlyError', () => {
     expect(friendlyError({ message: 'STOCK_SHORT', details: 'Cola' })).toContain('"Cola" tugagan')
     expect(friendlyError({ message: 'SHIFT_CLOSED' })).toContain('Smena yopilgan')
   })
+  it("smena yopish va qarz to'lovi xatolari", () => {
+    expect(friendlyError({ message: 'NOTE_REQUIRED', details: 'Cola, Somsa' })).toContain('izoh yozing: Cola, Somsa')
+    expect(friendlyError({ message: 'OVERPAY', details: '30000' })).toContain("so'm")
+  })
   it('internet xatosini aniqlaydi', () => {
     expect(isNetworkError({ message: 'TypeError: Failed to fetch' })).toBe(true)
     expect(friendlyError({ message: 'Failed to fetch' })).toContain('Internet')

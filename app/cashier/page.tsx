@@ -4,7 +4,6 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { LogOut, ShoppingCart, Plus, X, PackagePlus, PackageMinus, Clock, Search, UtensilsCrossed } from 'lucide-react'
 import DebtorCard from './components/DebtorCard'
-import jsPDF from 'jspdf'
 import {
   canSetQty, extraQty, extraSummary, isVisible as isProductVisible, stockModeOf, toBalances,
   type Balances, type NewOrderExtra, type StockMode,
@@ -13,6 +12,8 @@ import { matchesQuery } from '@/lib/search'
 import ProductCard from './components/ProductCard'
 import NumberPad from './components/NumberPad'
 import { friendlyError } from '@/lib/errors'
+import { clearStoredUser, getStoredUser } from '@/lib/session'
+import { downloadCloseShiftPdf } from '@/lib/closePdf'
 import { formatEquivalents, formatKg, hissaFromKg, portionLabel, portionsToHissa } from '@/lib/osh'
 
 type User = { id: string; name: string; role: string }
@@ -95,9 +96,8 @@ export default function CashierPage() {
   }, [bills, activeBillId, nextBillId])
 
   useEffect(() => {
-    const u = localStorage.getItem('pos_user')
-    if (!u) { router.push('/'); return }
-    const parsed = JSON.parse(u)
+    const parsed = getStoredUser()
+    if (!parsed) { router.push('/'); return }
     if (parsed.role !== 'worker') { router.push('/admin'); return }
     setUser(parsed)
     loadData()
@@ -157,6 +157,13 @@ export default function CashierPage() {
   // Osh mahsulotlari (butun, yarim): kattasidan boshlab
   const oshProducts = products.filter(p => p.unit_type === 'hissa').sort((a, b) => b.hissa_per_unit - a.hissa_per_unit)
   const portionItems = oshProducts.map(p => ({ product: p, qty: parseInt(portionQty[p.id] || '0') || 0 })).filter(i => i.qty > 0)
+
+  // Amal bajarayotgan xodim; yo'q bo'lsa qayta kirish so'raladi
+  const currentUserId = (): string | null => {
+    const id = getStoredUser()?.id ?? null
+    if (!id) { showToast('Qayta kiring'); router.push('/') }
+    return id
+  }
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 2500) }
   const fmt = (n: number) => n.toLocaleString('uz-UZ')
@@ -219,77 +226,76 @@ export default function CashierPage() {
   await doOpenShift()
 }
 
+  // Smena ochish bazadagi open_shift funksiyasida bajariladi: smena, boshlang'ich qoldiq, tashlangan qoldiq
+  // va osh qozoni bitta tranzaksiyada. Ikki planshet bir vaqtda bossa, ikkinchisiga mavjud smena qaytadi.
   const doOpenShift = async (customPrevStocks?: PrevStock[]) => {
+    if (busy.current) return
+    const uid = currentUserId()
+    if (!uid) return
+    busy.current = true
     setLoading(true)
-    const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
-    const { data, error } = await supabase.from('shifts').insert({ opened_by: u.id, is_open: true }).select().single()
-    if (error || !data) {
-      showToast(`Smena ochilmadi: ${friendlyError(error)}`)
+    try {
+      const items = (customPrevStocks ?? prevStocks).map(ps => ({
+        product_id: ps.product_id, qty: ps.qty, qty_original: ps.qty_original, note: ps.note.trim(),
+      }))
+      const { data, error } = await supabase.rpc('open_shift', { p_worker_id: uid, p_items: items })
+      if (error) { showToast(`Smena ochilmadi: ${friendlyError(error)}`); return }
+      // Oynani darrov yopamiz: ma'lumot yuklanishini kutib turganda kassir boshqa oyna ochgan bo'lishi mumkin
+      setActiveModal(null); setPrevStocks([])
+      showToast((data as { existing?: boolean }).existing ? 'Mavjud smena topildi!' : 'Smena ochildi!')
+      await loadData()
+    } finally {
+      busy.current = false
       setLoading(false)
+    }
+  }
+
+  // Tizim qoldig'idan farq qilgan har bir mahsulot uchun izoh majburiy
+  const closeShiftMissingNotes = () => products.filter(p => {
+    const rep = shiftReport[p.id]
+    if (!rep || rep.actual === '') return false
+    const actual = parseFloat(rep.actual)
+    return Number.isFinite(actual) && actual !== getSystemQty(p) && !rep.note?.trim()
+  })
+
+  // Smena yopish bazadagi close_shift funksiyasida: tizim qoldig'i serverda hisoblanadi,
+  // hisobot qatorlari va smena yopilishi birga yoziladi. PDF faqat muvaffaqiyatdan keyin yaratiladi.
+  const closeShift = async () => {
+    if (!shift || busy.current) return
+    const uid = currentUserId()
+    if (!uid) return
+    const missing = closeShiftMissingNotes()
+    if (missing.length > 0) {
+      showToast(`Izoh yozing: ${missing.slice(0, 3).map(p => p.name).join(', ')}${missing.length > 3 ? ' ...' : ''}`)
       return
     }
-    {
-      const workingPrevStocks = customPrevStocks ?? prevStocks
-      const stockRows = products.map(p => { const prev = workingPrevStocks.find(ps => ps.product_id === p.id); return { shift_id: data.id, product_id: p.id, initial_qty: prev ? prev.qty : 0 } })
-      await supabase.from('shift_stock').insert(stockRows)
-      const reducedProducts = workingPrevStocks.filter(ps => ps.qty < ps.qty_original)
-      if (reducedProducts.length > 0) {
-        await supabase.from('write_offs').insert(reducedProducts.map(ps => ({ shift_id: data.id, product_id: ps.product_id, qty: ps.qty_original - ps.qty, reason: ps.note || 'Smena boshida chiqindi', worker_id: u.id })))
-      }
-      const oshProducts = products.filter(p => p.unit_type === 'hissa')
-      if (oshProducts.length > 0) {
-        const butun = oshProducts.find(p => p.hissa_per_unit === 3)
-        const yarim = oshProducts.find(p => p.hissa_per_unit === 2)
-        const butunQty = workingPrevStocks.find(ps => ps.product_id === butun?.id)?.qty || 0
-        const yarimQty = workingPrevStocks.find(ps => ps.product_id === yarim?.id)?.qty || 0
-        const totalHissa = butunQty * 3
-        if (totalHissa > 0) { await supabase.from('osh_stock').insert({ shift_id: data.id, product_group: 'osh', total_hissa: totalHissa }) }
-        else if (yarimQty > 0) { await supabase.from('osh_stock').insert({ shift_id: data.id, product_group: 'osh', total_hissa: yarimQty * 2 }) }
-      }
-      // Oynani darrov yopamiz: ma'lumot yuklanishini kutib turganda kassir boshqa oyna
-      // (kirim, to'lov) ochgan bo'lishi mumkin, uni keyin yopib yubormaslik kerak.
-      setShift(data); setActiveModal(null); showToast('Smena ochildi!'); setPrevStocks([])
-      await loadData()
-    }
-    setLoading(false)
-  }
-
-  const closeShift = async () => {
-    if (!shift) return
+    busy.current = true
     setLoading(true)
-    const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
-    const reportRows = products.map(p => { const systemQty = getSystemQty(p); const rep = shiftReport[p.id]; const actual = !rep?.actual ? systemQty : parseFloat(rep.actual); const diff = actual - systemQty; return { shift_id: shift.id, product_id: p.id, system_qty: systemQty, actual_qty: actual, diff, note: rep?.note || '' } })
-    await supabase.from('shift_reports').insert(reportRows)
-    await supabase.from('shifts').update({ is_open: false, closed_at: new Date().toISOString(), closed_by: u.id }).eq('id', shift.id)
-    generateShiftPDF(reportRows)
-    localStorage.removeItem('pos_bills'); localStorage.removeItem('pos_active_bill'); localStorage.removeItem('pos_next_bill')
-    setBills([{ id: 1, cart: [] }]); setActiveBillId(1); setNextBillId(2)
-    setShift(null); setBalances({}); setShiftReport({})
-    showToast('Smena yopildi! PDF yuklab olindi.'); setLoading(false); setActiveModal(null)
-  }
+    try {
+      const rows = products
+        .filter(p => shiftReport[p.id]?.actual !== undefined && shiftReport[p.id].actual !== '' && Number.isFinite(parseFloat(shiftReport[p.id].actual)))
+        .map(p => ({ product_id: p.id, actual_qty: parseFloat(shiftReport[p.id].actual), note: shiftReport[p.id].note?.trim() || '' }))
+      const { data, error } = await supabase.rpc('close_shift', { p_shift_id: shift.id, p_worker_id: uid, p_rows: rows })
+      if (error) { showToast(friendlyError(error)); return }
 
-  const generateShiftPDF = (reportRows: { product_id: string; system_qty: number; actual_qty: number; diff: number; note: string }[]) => {
-    const doc = new jsPDF(); let y = 20
-    doc.setFontSize(18); doc.setFont('helvetica', 'bold'); doc.text('EA MURUNTOV - Smena Hisoboti', 105, y, { align: 'center' }); y += 10
-    doc.setFontSize(10); doc.setFont('helvetica', 'normal')
-    doc.text(`Sana: ${new Date().toLocaleDateString('ru-RU')}`, 105, y, { align: 'center' }); y += 6
-    doc.text(`Smena: ${new Date(shift!.opened_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} - ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`, 105, y, { align: 'center' }); y += 10
-    doc.setLineWidth(0.5); doc.line(20, y, 190, y); y += 8
-    doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.text('Mahsulot hisobi:', 20, y); y += 8
-    doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setFillColor(240, 240, 240); doc.rect(20, y - 4, 170, 8, 'F')
-    doc.text('Mahsulot', 22, y); doc.text('Tizim', 110, y); doc.text('Haqiqiy', 130, y); doc.text('Farq', 155, y); y += 8
-    doc.setFont('helvetica', 'normal')
-    reportRows.forEach(r => {
-      if (y > 265) { doc.addPage(); y = 20 }
-      const prod = products.find(p => p.id === r.product_id)
-      if (r.diff !== 0) doc.setTextColor(180, 50, 50); else doc.setTextColor(0, 0, 0)
-      doc.text((prod?.name || 'Noma\'lum').slice(0, 35), 22, y); doc.text(String(r.system_qty), 115, y); doc.text(String(r.actual_qty), 135, y)
-      doc.text(r.diff === 0 ? '-' : (r.diff > 0 ? '+' : '') + String(r.diff), 158, y)
-      if (r.note) { y += 5; doc.setFontSize(8); doc.setTextColor(120, 120, 120); doc.text(`  Izoh: ${r.note}`, 22, y); doc.setFontSize(9); doc.setTextColor(0, 0, 0) }
-      doc.setTextColor(0, 0, 0); y += 7
-    })
-    doc.setFontSize(8); doc.setTextColor(150, 150, 150); doc.text('Zarafshon Dasturchilari | EA Muruntov POS', 105, 285, { align: 'center' })
-    doc.save(`smena-hisobot-${new Date().toLocaleDateString('ru-RU').replace(/\./g, '-')}-${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }).replace(':', '-')}.pdf`)
+      const reportRows = ((data as { rows: { product_id: string; system_qty: number; actual_qty: number; diff: number; note: string }[] }).rows || []).map(r => ({
+        name: products.find(p => p.id === r.product_id)?.name || "Noma'lum",
+        system_qty: Number(r.system_qty), actual_qty: Number(r.actual_qty), diff: Number(r.diff), note: r.note,
+      }))
+      const openedAt = shift.opened_at
+      localStorage.removeItem('pos_bills'); localStorage.removeItem('pos_active_bill'); localStorage.removeItem('pos_next_bill')
+      setBills([{ id: 1, cart: [] }]); setActiveBillId(1); setNextBillId(2)
+      setShift(null); setBalances({}); setShiftReport({}); setActiveModal(null)
+      try {
+        await downloadCloseShiftPdf(openedAt, reportRows)
+        showToast('Smena yopildi! PDF yuklab olindi.')
+      } catch {
+        showToast('Smena yopildi, lekin PDF yaratilmadi. Rahbarga ayting.')
+      }
+    } finally {
+      busy.current = false
+      setLoading(false)
+    }
   }
 
   const addBill = () => {
@@ -361,7 +367,8 @@ export default function CashierPage() {
     setLoading(true)
     setPayError('')
     try {
-      const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
+      const u = { id: currentUserId() }
+      if (!u.id) return
       const paymentNote = moslashuvActual && moslashuvActual !== total ? `Moslashuv: ${fmt(moslashuvActual)} som (farq: ${fmt(moslashuvActual - total)} som)` : null
       const items = cart.map(i => ({ product_id: i.product.id, qty: i.qty }))
       const debtorId = payType === 'qarz' && selectedDebtorId ? selectedDebtorId : null
@@ -420,7 +427,8 @@ export default function CashierPage() {
     busy.current = true
     setLoading(true)
     try {
-      const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
+      const u = { id: currentUserId() }
+      if (!u.id) return
       const { data, error } = byPortion
         ? await supabase.rpc('add_osh_portions', {
             p_shift_id: shift.id, p_worker_id: u.id,
@@ -455,7 +463,8 @@ export default function CashierPage() {
     busy.current = true
     setLoading(true)
     try {
-      const u = JSON.parse(localStorage.getItem('pos_user') || '{}')
+      const u = { id: currentUserId() }
+      if (!u.id) return
       const { error } = await supabase.rpc('add_write_off', {
         p_shift_id: shift.id, p_worker_id: u.id, p_product_id: selectedProd, p_qty: amount, p_reason: reason.trim(),
       })
@@ -469,32 +478,45 @@ export default function CashierPage() {
     }
   }
 
+  // Menyu boshqaruvi: har bir yozuv natijasi tekshiriladi, xato bo'lsa kassirga aytiladi
   const addCategory = async () => {
     if (!newCatName.trim()) return
-    const { data } = await supabase.from('categories').insert({ name: newCatName.trim(), order_num: categories.length + 1 }).select().single()
-    if (data) { setCategories(p => [...p, data]); setNewCatName(''); showToast('Kategoriya qoshildi!') }
+    const { data, error } = await supabase.from('categories').insert({ name: newCatName.trim(), order_num: categories.length + 1 }).select().single()
+    if (error || !data) { showToast(`Kategoriya qo'shilmadi: ${friendlyError(error)}`); return }
+    setCategories(p => [...p, data]); setNewCatName(''); showToast("Kategoriya qo'shildi!")
   }
   const deleteCategory = async (id: string) => {
-    if (!window.confirm('Kategoriyani ochirasizmi?')) return
-    await supabase.from('categories').delete().eq('id', id)
+    if (!window.confirm("Kategoriyani o'chirasizmi?")) return
+    const { error } = await supabase.from('categories').delete().eq('id', id)
+    if (error) { showToast(`O'chirilmadi: ${friendlyError(error)}`); return }
     setCategories(p => p.filter(c => c.id !== id))
   }
   const addProduct = async () => {
     if (!newProdName.trim() || !newProdPrice || !newProdCat) return
-    const { data } = await supabase.from('products').insert({ name: newProdName.trim(), price: parseInt(newProdPrice), category_id: newProdCat, is_available: true }).select().single()
-    if (data) { setProducts(p => [...p, data]); setNewProdName(''); setNewProdPrice(''); setNewProdCat(''); showToast('Mahsulot qoshildi!') }
+    const price = parseInt(newProdPrice)
+    if (!(price > 0)) { showToast("Narx musbat son bo'lishi kerak"); return }
+    const { data, error } = await supabase.from('products').insert({ name: newProdName.trim(), price, category_id: newProdCat, is_available: true }).select().single()
+    if (error || !data) { showToast(`Mahsulot qo'shilmadi: ${friendlyError(error)}`); return }
+    setProducts(p => [...p, data]); setNewProdName(''); setNewProdPrice(''); setNewProdCat(''); showToast("Mahsulot qo'shildi!")
   }
   const deleteProduct = async (id: string) => {
-    if (!window.confirm('Mahsulotni ochirasizmi?')) return
-    await supabase.from('products').delete().eq('id', id)
+    if (!window.confirm("Mahsulotni o'chirasizmi?")) return
+    const { error } = await supabase.from('products').delete().eq('id', id)
+    if (error) {
+      // 23503: mahsulot sotuv, kirim yoki chiqim tarixida bor
+      showToast(error.code === '23503' ? "Bu mahsulot sotuv tarixida bor, o'chirib bo'lmaydi. \"Yo'q\" qiling." : `O'chirilmadi: ${friendlyError(error)}`)
+      return
+    }
     setProducts(p => p.filter(x => x.id !== id))
   }
   const toggleAvail = async (p: Product) => {
-    await supabase.from('products').update({ is_available: !p.is_available }).eq('id', p.id)
+    const { error } = await supabase.from('products').update({ is_available: !p.is_available }).eq('id', p.id)
+    if (error) { showToast(`Saqlanmadi: ${friendlyError(error)}`); return }
     setProducts(prev => prev.map(x => x.id === p.id ? { ...x, is_available: !x.is_available } : x))
   }
   const toggleHideWhenEmpty = async (p: Product) => {
-    await supabase.from('products').update({ hide_when_empty: !p.hide_when_empty }).eq('id', p.id)
+    const { error } = await supabase.from('products').update({ hide_when_empty: !p.hide_when_empty }).eq('id', p.id)
+    if (error) { showToast(`Saqlanmadi: ${friendlyError(error)}`); return }
     setProducts(prev => prev.map(x => x.id === p.id ? { ...x, hide_when_empty: !x.hide_when_empty } : x))
     showToast(p.hide_when_empty ? `"${p.name}" endi doim ko'rinadi` : `"${p.name}" tugaganda yashiriladi`)
   }
@@ -516,7 +538,7 @@ export default function CashierPage() {
             <button aria-label="Qarzdorlar" title="Qarzdorlar" onClick={() => setActiveModal('debtors')} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#fbbf24', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}><Search size={13}/></button>
           </>}
           <button aria-label="Menyu" title="Menyu" onClick={() => setShowMenu(true)} style={{width:'32px', height:'32px', borderRadius:'8px', background:'rgba(61,46,16,0.8)', color:'#a78bfa', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', border:'none'}}><UtensilsCrossed size={13}/></button>
-          <button aria-label="Chiqish" title="Chiqish" onClick={() => { localStorage.removeItem('pos_user'); router.push('/') }} style={{width:'32px', height:'32px', borderRadius:'8px', border:'1px solid #4b5563', color:'#9ca3af', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', background:'transparent'}}><LogOut size={13}/></button>
+          <button aria-label="Chiqish" title="Chiqish" onClick={() => { clearStoredUser(); router.push('/') }} style={{width:'32px', height:'32px', borderRadius:'8px', border:'1px solid #4b5563', color:'#9ca3af', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', background:'transparent'}}><LogOut size={13}/></button>
         </div>
       </div>
 
@@ -700,7 +722,7 @@ export default function CashierPage() {
                     {rep.actual !== '' && diff !== 0 && (
                       <>
                         <div className={`text-xs font-bold mb-1 ${diff < 0 ? 'text-red-500' : 'text-green-600'}`}>Farq: {diff > 0 ? '+' : ''}{diff} ta</div>
-                        <input type="text" placeholder="Izoh (majburiy)..." value={rep.note} onChange={e => setShiftReport(prev => ({ ...prev, [p.id]: { ...rep, note: e.target.value } }))} className="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs outline-none focus:border-[#C8860A]"/>
+                        <input type="text" placeholder="Izoh (majburiy)..." aria-label={`${p.name} izohi`} value={rep.note} onChange={e => setShiftReport(prev => ({ ...prev, [p.id]: { ...rep, note: e.target.value } }))} className={`w-full border rounded-lg px-2 py-1 text-xs outline-none focus:border-[#C8860A] ${rep.note.trim() ? 'border-gray-200' : 'border-red-300 bg-red-50'}`}/>
                       </>
                     )}
                   </div>
