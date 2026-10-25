@@ -6,7 +6,8 @@ import jsPDF from 'jspdf'
 import { Clock, UtensilsCrossed, Users, BarChart3, LogOut, PackagePlus, PackageMinus, Search, Calendar } from 'lucide-react'
 import DebtorCard from '../cashier/components/DebtorCard'
 import { STOCK_MODES, stockModeOf, type StockMode } from '@/lib/stock'
-import { summarizeOsh } from '@/lib/osh'
+import { formatEquivalents, formatKg, formatPortions, portionLabel, summarizeOsh, type OshProduct, type OshSummary } from '@/lib/osh'
+import OshCard from './components/OshCard'
 
 type User = { id: string; name: string; role: string }
 type Category = { id: string; name: string; order_num: number }
@@ -29,7 +30,7 @@ type ShiftSummary = {
   order_count: number; total_revenue: number; cash_revenue: number
   click_revenue: number; card_revenue: number; debt_revenue: number; ichki_count: number
 }
-type ShiftReportData = { mahsulot: any[]; izohlar: any[] }
+type ShiftReportData = { mahsulot: any[]; izohlar: any[]; osh: OshSummary | null }
 type DateFilter = 'bugun' | 'hafta' | 'oy' | 'custom'
 
 type Tab = 'hisobot' | 'tarix' | 'qarzdorlar' | 'mahsulot' | 'xodim'
@@ -145,6 +146,10 @@ export default function AdminPage() {
     }
   }
 
+  const oshList: OshProduct[] = products
+    .filter(p => p.unit_type === 'hissa')
+    .map(p => ({ id: p.id, name: p.name, hissa_per_unit: p.hissa_per_unit, kg_to_hissa: p.kg_to_hissa }))
+
   const loadShiftReport = async (shiftId: string) => {
     if (shiftReports[shiftId]) return
 
@@ -155,6 +160,7 @@ export default function AdminPage() {
       { data: woData },
       { data: ords },
       { data: ichkiOrds },
+      { data: oshRows },
     ] = await Promise.all([
       supabase.from('shift_reports').select('*, products(name)').eq('shift_id', shiftId),
       supabase.from('shift_stock').select('*').eq('shift_id', shiftId),
@@ -162,6 +168,7 @@ export default function AdminPage() {
       supabase.from('write_offs').select('*, products(name), users(name)').eq('shift_id', shiftId),
       supabase.from('orders').select('id, pay_type, worker_id').eq('shift_id', shiftId),
       supabase.from('orders').select('id, pay_type, worker_id, created_at').eq('shift_id', shiftId).eq('pay_type', 'ichki'),
+      supabase.from('osh_stock').select('total_hissa').eq('shift_id', shiftId),
     ])
 
     let orderItemsData: any[] = []
@@ -171,24 +178,15 @@ export default function AdminPage() {
       orderItemsData = oi || []
     }
 
-    const enriched = (report || []).map((r: any) => {
-      const prod = products.find((p: any) => p.id === r.product_id)
+    const isOsh = (productId: string) => products.find(p => p.id === productId)?.unit_type === 'hissa'
+    const enriched = (report || []).filter((r: any) => !isOsh(r.product_id)).map((r: any) => {
       const initial = stockData?.find((s: any) => s.product_id === r.product_id)?.initial_qty || 0
       const sotildi = orderItemsData.filter((oi: any) => oi.product_id === r.product_id).reduce((s: number, oi: any) => s + oi.qty, 0)
       const smenaChiqim = woData?.filter((w: any) => w.product_id === r.product_id && w.reason === 'Smena boshida chiqindi').reduce((s: number, w: any) => s + w.qty, 0) || 0
       const oddiyChiqim = woData?.filter((w: any) => w.product_id === r.product_id && w.reason !== 'Smena boshida chiqindi').reduce((s: number, w: any) => s + w.qty, 0) || 0
       const totalChiqim = oddiyChiqim + smenaChiqim
       const realInitial = initial + smenaChiqim
-      let kirim = 0
-      if (prod?.unit_type === 'hissa') {
-        const kgKirim = siData?.filter((si: any) => si.product_id === r.product_id).reduce((s: number, si: any) => s + si.qty, 0) || 0
-        if (kgKirim > 0) {
-          const hissaKirim = Math.round(kgKirim * (prod.kg_to_hissa || 21))
-          kirim = Math.floor(hissaKirim / (prod.hissa_per_unit || 3))
-        }
-        return { ...r, initial: realInitial, kirim, sotildi, chiqim: totalChiqim, qoldiq: r.actual_qty }
-      }
-      kirim = siData?.filter((si: any) => si.product_id === r.product_id).reduce((s: number, si: any) => s + si.qty, 0) || 0
+      const kirim = siData?.filter((si: any) => si.product_id === r.product_id).reduce((s: number, si: any) => s + si.qty, 0) || 0
       const qoldiq = realInitial + kirim - sotildi - totalChiqim
       return { ...r, initial: realInitial, kirim, sotildi, chiqim: totalChiqim, qoldiq }
     }).filter((r: any) => r.initial > 0 || r.kirim > 0 || r.sotildi > 0 || r.chiqim > 0)
@@ -219,7 +217,16 @@ export default function AdminPage() {
       return new Date(a.vaqt).getTime() - new Date(b.vaqt).getTime()
     })
 
-    setShiftReports(prev => ({ ...prev, [shiftId]: { mahsulot: enriched, izohlar } }))
+    const osh = summarizeOsh({
+      products: oshList,
+      initialQty: Object.fromEntries((stockData || []).map((st: any) => [st.product_id, st.initial_qty])),
+      stockIns: siData || [],
+      soldItems: orderItemsData,
+      writeOffs: woData || [],
+      poolHissa: (oshRows || []).reduce((sum: number, row: any) => sum + (row.total_hissa || 0), 0),
+    })
+
+    setShiftReports(prev => ({ ...prev, [shiftId]: { mahsulot: enriched, izohlar, osh } }))
   }
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 2500) }
@@ -247,8 +254,9 @@ export default function AdminPage() {
   const stockInLabel = (si: StockIn) => {
     const p = products.find(x => x.id === si.product_id)
     if (p?.unit_type !== 'hissa') return `${si.qty} ta`
-    if (si.source === 'auto_extra') return `${Math.round(si.qty * (p.kg_to_hissa || 21))} hissa`
-    return `${Number(Number(si.qty).toFixed(2))} kg`
+    const hissa = Math.round(si.qty * (p.kg_to_hissa || 21))
+    const portions = `${Math.floor(hissa / (p.hissa_per_unit || 1))} ${portionLabel({ id: p.id, name: p.name })}`
+    return `${formatKg(hissa, oshList)} = ${portions}`
   }
 
   const toggleAvail = async (p: Product) => {
@@ -318,7 +326,7 @@ export default function AdminPage() {
     shift ? rows.filter(r => new Date(r.created_at) >= new Date(shift.opened_at)) : []
   const shiftOrderIdSet = new Set(shiftOrders.map(o => o.id))
   const osh = summarizeOsh({
-    products: products.filter(p => p.unit_type === 'hissa').map(p => ({ id: p.id, name: p.name, hissa_per_unit: p.hissa_per_unit, kg_to_hissa: p.kg_to_hissa })),
+    products: oshList,
     initialQty: Object.fromEntries(stocks.map(st => [st.product_id, st.initial_qty])),
     stockIns: sinceShift(stockIns),
     soldItems: orderItems.filter(oi => shiftOrderIdSet.has(oi.order_id)),
@@ -382,12 +390,13 @@ export default function AdminPage() {
       doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
       doc.text('Osh (umumiy qozon, hissa hisobida):', 20, y); y += 6
       doc.setFont('helvetica', 'normal'); doc.setFontSize(9)
+      const kgOf = (h: number) => formatKg(h, oshList)
       const oshLines = [
-        `Boshlangich: ${osh.initial} | Kirim: +${osh.kirimHissa} (${osh.kirimKg} kg) | Qoshimcha tayyorlangan (avto): +${osh.auto}`,
-        `Sotildi: -${osh.soldHissa}${osh.sold.length ? ' (' + osh.sold.map(x => `${x.name} ${x.qty} ta`).join(', ') + ')' : ''} | Chiqim: -${osh.writeOff}`,
-        `Qoldiq: ${osh.remaining} hissa${osh.portions.length ? ' (' + osh.portions.map(x => `${x.name} ${x.qty} ta`).join(' yoki ') + ')' : ''}`,
+        `Boshlangich: ${kgOf(osh.initial)} | Kirim: +${kgOf(osh.kirimHissa)} (= ${formatEquivalents(osh.kirimHissa, oshList)}) | Qoshimcha tayyorlangan (avto): +${kgOf(osh.auto)}`,
+        `Sotildi: -${kgOf(osh.soldHissa)}${osh.sold.length ? ' (' + osh.sold.map(x => `${x.qty} ${portionLabel(oshList.find(o => o.id === x.id) || { id: x.id, name: x.name })}`).join(' + ') + ')' : ''} | Chiqim: -${kgOf(osh.writeOff)}`,
+        `Qoldiq: ${kgOf(osh.remaining)} (= ${formatEquivalents(osh.remaining, oshList)})`,
       ]
-      if (osh.unexplained !== 0) oshLines.push(`Hisobda farq: ${osh.unexplained > 0 ? '+' : ''}${osh.unexplained} hissa (tizimga yozilmagan sotuv/chiqim)`)
+      if (osh.unexplained !== 0) oshLines.push(`Hisobda farq: ${osh.unexplained > 0 ? '+' : '-'}${kgOf(Math.abs(osh.unexplained))} (${formatPortions(Math.abs(osh.unexplained), oshList)}) - tizimga yozilmagan`)
       oshLines.forEach(l => { doc.text(l.slice(0, 110), 22, y); y += 5 })
     }
     doc.setFontSize(8); doc.setTextColor(150)
@@ -524,43 +533,7 @@ export default function AdminPage() {
               </div>
             )}
 
-            {osh.hasActivity && (
-              <div data-testid="osh-card" style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
-                <div style={{padding:'12px 16px', borderBottom:'1px solid #f3f4f6'}}>
-                  <div style={{fontWeight:900, fontSize:'14px'}}>Osh (umumiy qozon)</div>
-                  <div style={{fontSize:'11px', color:'#9ca3af', marginTop:'2px'}}>Butun va yarim bitta qozondan olinadi, hisob hissa bilan yuritiladi</div>
-                </div>
-                <div style={{padding:'8px 16px'}}>
-                  {[
-                    { label: "Boshlang'ich", val: String(osh.initial), color: '#6b7280', note: osh.discarded > 0 ? `${osh.discarded} hissa smena boshida tashlangan` : '' },
-                    { label: 'Kirim', val: osh.kirimHissa > 0 ? `+${osh.kirimHissa}` : '—', color: '#16a34a', note: osh.kirimKg > 0 ? `${osh.kirimKg} kg` : '' },
-                    { label: 'Avto-kirim', val: osh.auto > 0 ? `+${osh.auto}` : '—', color: '#d97706', note: osh.auto > 0 ? "oshpaz yozilganidan ko'p qilgan (tizimda yo'q edi)" : '' },
-                    { label: 'Sotildi', val: osh.soldHissa > 0 ? `-${osh.soldHissa}` : '—', color: '#C8860A', note: osh.sold.map(x => `${x.name} ${x.qty} ta`).join(' · ') },
-                    { label: 'Chiqim', val: osh.writeOff > 0 ? `-${osh.writeOff}` : '—', color: '#ef4444', note: '' },
-                  ].map(r => (
-                    <div key={r.label} style={{display:'flex', alignItems:'baseline', gap:'8px', padding:'6px 0', borderBottom:'1px solid #f9fafb', fontSize:'13px'}}>
-                      <div style={{width:'92px', color:'#6b7280', fontWeight:700, flexShrink:0}}>{r.label}</div>
-                      <div style={{width:'56px', textAlign:'right', fontWeight:900, color:r.color, flexShrink:0}}>{r.val}</div>
-                      <div style={{flex:1, fontSize:'11px', color:'#9ca3af'}}>{r.note}</div>
-                    </div>
-                  ))}
-                  <div style={{display:'flex', alignItems:'baseline', gap:'8px', padding:'10px 0 6px', fontSize:'14px'}}>
-                    <div style={{width:'92px', fontWeight:900}}>Qoldiq</div>
-                    <div style={{width:'56px', textAlign:'right', fontWeight:900, color:'#1A1208', flexShrink:0}}>{osh.remaining}</div>
-                    <div style={{flex:1, fontSize:'11px', color:'#6b7280'}}>
-                      hissa = {osh.portions.map(x => `${x.qty} ta ${x.name.toLowerCase()}`).join(' yoki ')}
-                    </div>
-                  </div>
-                  {osh.unexplained !== 0 && (
-                    <div style={{marginTop:'4px', marginBottom:'8px', backgroundColor:'#fffbeb', border:'1px solid #fde68a', borderRadius:'10px', padding:'8px 10px', fontSize:'11px', color:'#92400e', lineHeight:1.5}}>
-                      {osh.unexplained > 0
-                        ? `${osh.unexplained} hissa tizimga yozilmagan holda sotilgan (osh "Cheksiz" rejimida bo'lganda yoki kirim kiritilishidan oldin). Qozonda bor edi, tizimda yo'q edi.`
-                        : `Tizimdagi qoldiq hisoblanganidan ${-osh.unexplained} hissa kam: yozilmagan chiqim bo'lishi mumkin.`}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
+            {osh.hasActivity && <OshCard summary={osh} products={oshList} />}
 
             {ichkiOrders.length > 0 && (
               <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
@@ -774,11 +747,13 @@ export default function AdminPage() {
                             </table>
                           </div>
                         </div>
-                      ) : (
+                      ) : !reportData?.osh?.hasActivity && (
                         <div style={{backgroundColor:'white', borderRadius:'12px', padding:'12px', textAlign:'center', fontSize:'12px', color:'#9ca3af'}}>
                           Mahsulot hisoboti yoq
                         </div>
                       )}
+
+                      {reportData?.osh?.hasActivity && <OshCard summary={reportData.osh} products={oshList} />}
 
                       {izohlar.length > 0 && (
                         <div style={{backgroundColor:'white', borderRadius:'12px', overflow:'hidden'}}>

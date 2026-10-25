@@ -10,6 +10,7 @@ Foydalanuvchi sinovlari va takliflari asosida. Holat: ✅ tayyor · 🔧 jarayon
 | 2 | Cheksiz taom | ✅ sotiladi (kutilgandek) |
 | 3 | Yumshoq taom, qoldiq 0 | ✅ sotiladi, avto-kirim yoziladi |
 | 4 | Rahbar → Hisobot → Mahsulot hisobi (osh) | ✅ tuzatildi: butun va yarim bitta "Osh (umumiy qozon)" kartasida ko'rsatiladi |
+| 5 | Osh hisobotida "hissa" tushunarsiz | ✅ hisobot kg va butun/yarim bilan; kirimni kg yoki porsiya (butun/yarim) bilan kiritish mumkin |
 
 ## Rahbar paneli
 
