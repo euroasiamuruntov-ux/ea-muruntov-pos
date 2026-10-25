@@ -3,7 +3,7 @@ import { formatEquivalents, formatKg, formatPortions, portionLabel, type OshProd
 
 // Osh hisobi: butun va yarim bitta qozondan olinadi, shuning uchun bitta karta.
 // Foydalanuvchiga hissa ko'rsatilmaydi: kg va porsiya (butun/yarim) bilan yoziladi.
-export default function OshCard({ summary: s, products }: { summary: OshSummary; products: OshProduct[] }) {
+export default function OshCard({ summary: s, products, embedded = false }: { summary: OshSummary; products: OshProduct[]; embedded?: boolean }) {
   const kg = (h: number) => formatKg(h, products)
   const labelOf = (id: string) => {
     const p = products.find(x => x.id === id)
@@ -25,11 +25,15 @@ export default function OshCard({ summary: s, products }: { summary: OshSummary;
   ]
 
   return (
-    <div data-testid="osh-card" style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
-      <div style={{padding:'12px 16px', borderBottom:'1px solid #f3f4f6'}}>
-        <div style={{fontWeight:900, fontSize:'14px'}}>Osh (umumiy qozon)</div>
-        <div style={{fontSize:'11px', color:'#9ca3af', marginTop:'2px'}}>Butun va yarim bitta qozondan olinadi. Hisob kg va porsiyada</div>
-      </div>
+    <div data-testid="osh-card" style={embedded ? undefined : {backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
+      {embedded ? (
+        <div style={{padding:'8px 16px 0', fontSize:'11px', color:'#9ca3af'}}>Butun va yarim bitta qozondan olinadi. Hisob kg va porsiyada</div>
+      ) : (
+        <div style={{padding:'12px 16px', borderBottom:'1px solid #f3f4f6'}}>
+          <div style={{fontWeight:900, fontSize:'14px'}}>Osh (umumiy qozon)</div>
+          <div style={{fontSize:'11px', color:'#9ca3af', marginTop:'2px'}}>Butun va yarim bitta qozondan olinadi. Hisob kg va porsiyada</div>
+        </div>
+      )}
       <div style={{padding:'8px 16px'}}>
         {rows.map(r => (
           <div key={r.label} style={{display:'flex', alignItems:'baseline', gap:'8px', padding:'6px 0', borderBottom:'1px solid #f9fafb', fontSize:'13px'}}>
