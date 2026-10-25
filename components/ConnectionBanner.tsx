@@ -55,6 +55,8 @@ export default function ConnectionBanner() {
     window.addEventListener('online', onOnline)
     window.addEventListener('offline', onOffline)
     const timer = window.setInterval(() => { if (!document.hidden) void check() }, 60_000)
+    // check() birinchi await dan keyin holatni o'zgartiradi (effekt ichida sinxron emas)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void check()
     return () => {
       window.removeEventListener('online', onOnline)

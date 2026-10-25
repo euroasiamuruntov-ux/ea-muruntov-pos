@@ -97,7 +97,7 @@ export default function DebtorCard({
           {/* To'lov qilish */}
           {debtor.total_debt > 0 && (
             <div className="bg-white rounded-xl p-3 space-y-2">
-              <div className="text-xs font-bold text-gray-500">Qarz to'lash:</div>
+              <div className="text-xs font-bold text-gray-500">Qarz to&apos;lash:</div>
               <input
                 type="number"
                 placeholder={`Max: ${fmt(debtor.total_debt)} so'm`}
@@ -135,13 +135,13 @@ export default function DebtorCard({
                       {new Date(o.created_at).toLocaleDateString('uz-UZ')} —{' '}
                       {new Date(o.created_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}
                     </span>
-                    <span className="font-black text-red-500">{fmt(o.total)} so'm</span>
+                    <span className="font-black text-red-500">{fmt(o.total)} so&apos;m</span>
                   </div>
                   {o.order_items?.map((oi, i) => {
                     const prod = products.find(p => p.id === oi.product_id)
                     return (
                       <div key={i} className="text-xs text-gray-500 ml-2">
-                        • {prod?.name || 'Noma\'lum'} × {oi.qty} — {fmt(oi.price * oi.qty)} so'm
+                        • {prod?.name || 'Noma\'lum'} × {oi.qty} — {fmt(oi.price * oi.qty)} so&apos;m
                       </div>
                     )
                   })}
@@ -153,7 +153,7 @@ export default function DebtorCard({
           {/* To'lov tarixi */}
           {payments.length > 0 && (
             <div className="bg-white rounded-xl p-3">
-              <div className="text-xs font-bold text-gray-500 mb-2">✅ To'lov tarixi:</div>
+              <div className="text-xs font-bold text-gray-500 mb-2">✅ To&apos;lov tarixi:</div>
               {payments.map((p, i) => (
                 <div key={i} className="flex justify-between items-center py-1.5 border-b border-gray-50 last:border-0">
                   <div>
@@ -163,14 +163,14 @@ export default function DebtorCard({
                       {new Date(p.created_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}
                     </div>
                   </div>
-                  <div className="font-black text-green-600 text-sm">+{fmt(p.amount)} so'm</div>
+                  <div className="font-black text-green-600 text-sm">+{fmt(p.amount)} so&apos;m</div>
                 </div>
               ))}
             </div>
           )}
 
           {orders.length === 0 && payments.length === 0 && loaded && (
-            <div className="text-center text-gray-400 text-xs py-2">Tarix yo'q</div>
+            <div className="text-center text-gray-400 text-xs py-2">Tarix yo&apos;q</div>
           )}
         </div>
       )}

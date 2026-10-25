@@ -76,3 +76,10 @@ export type ShiftSummary = {
   debt_revenue: number
   ichki_count: number
 }
+
+// Kassir paneli
+export type PayType = 'naqd' | 'click' | 'karta' | 'qarz' | 'ichki'
+export type CartItem = { product: Product; qty: number }
+export type Bill = { id: number; cart: CartItem[] }
+/** O'tgan smena oxiridagi qoldiq (yangi smena ochilganda tasdiqlanadi yoki kamaytiriladi) */
+export type PrevStock = { product_id: string; name: string; qty: number; qty_original: number; note: string }

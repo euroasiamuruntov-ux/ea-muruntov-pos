@@ -13,6 +13,8 @@ type Props = {
   setCategories: React.Dispatch<React.SetStateAction<Category[]>>
   setProducts: React.Dispatch<React.SetStateAction<Product[]>>
   showToast: (msg: string) => void
+  /** worker (kassir): qoldiq rejimi va "tez-tez" belgisini o'zgartira olmaydi (buni faqat Rahbar qiladi) */
+  role?: 'owner' | 'worker'
 }
 
 type Form = {
@@ -22,7 +24,8 @@ type Form = {
 
 const MODE_COLOR: Record<StockMode, string> = { strict: 'bg-blue-50 text-blue-700', soft: 'bg-amber-50 text-amber-700', none: 'bg-gray-100 text-gray-600' }
 
-export default function MenuTab({ categories, products, setCategories, setProducts, showToast }: Props) {
+export default function MenuTab({ categories, products, setCategories, setProducts, showToast, role = 'owner' }: Props) {
+  const owner = role === 'owner'
   const [query, setQuery] = useState('')
   const [categoryId, setCategoryId] = useState('all')
   const [status, setStatus] = useState<MenuStatusFilter>('all')
@@ -73,7 +76,7 @@ export default function MenuTab({ categories, products, setCategories, setProduc
     if (!price) { showToast("Narx musbat butun son bo'lishi kerak"); return }
     const { data, error } = await supabase.from('products').insert({
       name: newProd.name.trim(), price, category_id: newProd.category_id, is_available: true,
-      stock_mode: newProd.stock_mode, is_unlimited: newProd.stock_mode === 'none',
+      ...(owner ? { stock_mode: newProd.stock_mode, is_unlimited: newProd.stock_mode === 'none' } : {}),
     }).select().single()
     if (error || !data) { showToast("Taom qo'shilmadi: internetni tekshiring"); return }
     setProducts(p => [...p, data]); setNewProd({ name: '', price: '', category_id: newProd.category_id, stock_mode: newProd.stock_mode })
@@ -137,8 +140,8 @@ export default function MenuTab({ categories, products, setCategories, setProduc
     setSaving(true)
     const ok = await patchProduct(editing, {
       name: form.name.trim(), price, category_id: form.category_id || null,
-      stock_mode: form.stock_mode, is_unlimited: form.stock_mode === 'none',
-      is_favorite: form.is_favorite, hide_when_empty: form.hide_when_empty, is_available: form.is_available,
+      hide_when_empty: form.hide_when_empty, is_available: form.is_available,
+      ...(owner ? { stock_mode: form.stock_mode, is_unlimited: form.stock_mode === 'none', is_favorite: form.is_favorite } : {}),
     }, `${form.name.trim()}: saqlandi`)
     setSaving(false)
     if (ok) { setEditing(null); setForm(null) }
@@ -164,7 +167,7 @@ export default function MenuTab({ categories, products, setCategories, setProduc
           ))}
         </div>
         <div className="flex gap-1.5 overflow-x-auto pb-1" aria-label="Holat filtri">
-          {STATUS_FILTERS.map(f => (
+          {STATUS_FILTERS.filter(f => owner || f.id === 'all' || f.id === 'unavailable').map(f => (
             <button key={f.id} type="button" className={chip(status === f.id)} onClick={() => setStatus(f.id)}>{f.label}</button>
           ))}
         </div>
@@ -175,7 +178,7 @@ export default function MenuTab({ categories, products, setCategories, setProduc
         <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-2">
           <div className="font-black text-sm">Taomlar <span data-testid="menu-count" className="text-gray-400 font-bold">({visible.length}{filtered ? ` / ${products.length}` : ''})</span></div>
         </div>
-        {visible.length > 0 && (
+        {owner && visible.length > 0 && (
           <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50 flex items-center gap-2 flex-wrap">
             <span className="text-xs font-bold text-gray-500">Ro&apos;yxatdagi hammasiga:</span>
             {STOCK_MODES.map(m => (
@@ -184,9 +187,11 @@ export default function MenuTab({ categories, products, setCategories, setProduc
             ))}
           </div>
         )}
-        <div className="px-4 py-2 border-b border-gray-100 text-[11px] text-gray-400 leading-relaxed">
-          {STOCK_MODES.map(m => <span key={m.id} className="mr-3"><b>{m.label}</b>: {m.hint}</span>)}
-        </div>
+        {owner && (
+          <div className="px-4 py-2 border-b border-gray-100 text-[11px] text-gray-400 leading-relaxed">
+            {STOCK_MODES.map(m => <span key={m.id} className="mr-3"><b>{m.label}</b>: {m.hint}</span>)}
+          </div>
+        )}
 
         {visible.length === 0 ? (
           <div className="py-10 text-center text-gray-300">
@@ -204,16 +209,18 @@ export default function MenuTab({ categories, products, setCategories, setProduc
                   {p.hide_when_empty && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">tugaganda yashiriladi</span>}
                 </div>
                 <div className="text-xs text-gray-400 mt-0.5">{catName(p.category_id)} · {fmt(p.price)} som</div>
-                <div className="flex gap-1 mt-1.5">
-                  {STOCK_MODES.map(m => (
-                    <button key={m.id} type="button" title={m.hint} onClick={() => setMode(p, m.id)}
-                      className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border ${mode === m.id ? `border-[#C8860A] ${MODE_COLOR[m.id]}` : 'border-gray-200 bg-white text-gray-400'}`}>{m.label}</button>
-                  ))}
-                </div>
+                {owner && (
+                  <div className="flex gap-1 mt-1.5">
+                    {STOCK_MODES.map(m => (
+                      <button key={m.id} type="button" title={m.hint} onClick={() => setMode(p, m.id)}
+                        className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border ${mode === m.id ? `border-[#C8860A] ${MODE_COLOR[m.id]}` : 'border-gray-200 bg-white text-gray-400'}`}>{m.label}</button>
+                    ))}
+                  </div>
+                )}
               </div>
-              <button type="button" onClick={() => patchProduct(p, { is_favorite: !p.is_favorite }, p.is_favorite ? `${p.name}: tez-tez sotiladiganlardan olindi` : `${p.name}: kassirda tez-tez sotiladiganlarga qo'shildi`)}
+              {owner && <button type="button" onClick={() => patchProduct(p, { is_favorite: !p.is_favorite }, p.is_favorite ? `${p.name}: tez-tez sotiladiganlardan olindi` : `${p.name}: kassirda tez-tez sotiladiganlarga qo'shildi`)}
                 aria-label={`${p.name} tez-tez sotiladiganlarga`} title="Kassirda tepada ko'rsatish"
-                className="text-lg flex-shrink-0 w-8 h-8 flex items-center justify-center" style={{ opacity: p.is_favorite ? 1 : 0.3 }}>⭐</button>
+                className="text-lg flex-shrink-0 w-8 h-8 flex items-center justify-center" style={{ opacity: p.is_favorite ? 1 : 0.3 }}>⭐</button>}
               <button type="button" onClick={() => patchProduct(p, { is_available: !p.is_available })} aria-label={`${p.name} sotuvda`}
                 className={`px-2 h-8 rounded-full text-xs font-bold flex-shrink-0 ${p.is_available ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{p.is_available ? 'Bor' : "Yo'q"}</button>
               <button type="button" onClick={() => openEdit(p)} aria-label={`${p.name} tahrirlash`}
@@ -240,12 +247,14 @@ export default function MenuTab({ categories, products, setCategories, setProduc
               {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
-          <div className="flex gap-1.5">
-            {STOCK_MODES.map(m => (
-              <button key={m.id} type="button" title={m.hint} onClick={() => setNewProd(s => ({ ...s, stock_mode: m.id }))}
-                className={`flex-1 py-2 rounded-xl text-xs font-bold border ${newProd.stock_mode === m.id ? 'border-[#C8860A] bg-[#FFF8E7] text-[#C8860A]' : 'border-gray-200 text-gray-400'}`}>{m.label}</button>
-            ))}
-          </div>
+          {owner && (
+            <div className="flex gap-1.5">
+              {STOCK_MODES.map(m => (
+                <button key={m.id} type="button" title={m.hint} onClick={() => setNewProd(s => ({ ...s, stock_mode: m.id }))}
+                  className={`flex-1 py-2 rounded-xl text-xs font-bold border ${newProd.stock_mode === m.id ? 'border-[#C8860A] bg-[#FFF8E7] text-[#C8860A]' : 'border-gray-200 text-gray-400'}`}>{m.label}</button>
+              ))}
+            </div>
+          )}
           <button type="button" onClick={addProduct} className="py-2.5 bg-[#C8860A] text-[#1A1208] rounded-xl font-black text-sm">Qo&apos;shish</button>
         </div>
       </div>
@@ -296,7 +305,7 @@ export default function MenuTab({ categories, products, setCategories, setProduc
                   </select>
                 </label>
               </div>
-              <div>
+              {owner && <div>
                 <div className="text-xs font-bold text-gray-500 mb-1">Qoldiq rejimi</div>
                 <div className="flex gap-1.5">
                   {STOCK_MODES.map(m => (
@@ -305,12 +314,12 @@ export default function MenuTab({ categories, products, setCategories, setProduc
                   ))}
                 </div>
                 <div className="text-[11px] text-gray-400 mt-1">{STOCK_MODES.find(m => m.id === form.stock_mode)?.hint}</div>
-              </div>
+              </div>}
               {([
                 ['is_available', 'Sotuvda bor', "O'chiq bo'lsa kassirda ko'rinmaydi"],
                 ['is_favorite', 'Tez-tez sotiladi', 'Kassirda tepada alohida qatorda ko\'rinadi'],
                 ['hide_when_empty', 'Tugaganda yashirish', "Qoldiq 0 bo'lsa kassirda ko'rinmaydi (yumshoq taomda ishlamaydi)"],
-              ] as const).map(([key, label, hint]) => (
+              ] as const).filter(([key]) => owner || key !== 'is_favorite').map(([key, label, hint]) => (
                 <label key={key} className="flex items-start gap-3 cursor-pointer">
                   <input type="checkbox" checked={form[key]} onChange={e => setForm({ ...form, [key]: e.target.checked })} aria-label={label} className="mt-1 w-5 h-5 accent-[#C8860A]"/>
                   <span><span className="block text-sm font-bold text-[#1A1208]">{label}</span><span className="block text-[11px] text-gray-400">{hint}</span></span>

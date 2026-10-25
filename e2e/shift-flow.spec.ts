@@ -120,7 +120,7 @@ test("menyuda sotuv tarixi bor mahsulotni o'chirib bo'lmaydi: tushunarli xabar",
   await cashierLogin(page)
   await page.getByRole('button', { name: 'Menyu' }).click()
   page.once('dialog', d => d.accept())
-  await page.locator('div', { hasText: /^Somsa/ }).filter({ has: page.getByText('x', { exact: true }) }).last().getByText('x', { exact: true }).click()
+  await page.getByRole('button', { name: "Somsa o'chirish" }).click()
   await expect(page.getByText("sotuv tarixida bor")).toBeVisible()
   const { data } = await db.from('products').select('id').eq('id', P.somsa)
   expect(data).toHaveLength(1)

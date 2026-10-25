@@ -43,7 +43,10 @@ export default function AdminPage() {
     const parsed = getStoredUser()
     if (!parsed) { router.push('/'); return }
     if (parsed.role !== 'owner') { router.push('/cashier'); return }
+    // Kirgan xodim faqat brauzerda (localStorage) bor, shuning uchun bu yerda o'qiladi
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setUser(parsed)
+    // eslint-disable-next-line react-hooks/immutability
     loadAll()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
