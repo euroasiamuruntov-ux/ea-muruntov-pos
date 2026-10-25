@@ -5,17 +5,12 @@ import { supabase } from '@/lib/supabase'
 import jsPDF from 'jspdf'
 import { Clock, UtensilsCrossed, Users, BarChart3, LogOut, PackagePlus, PackageMinus, Search, Calendar } from 'lucide-react'
 import DebtorCard from '../cashier/components/DebtorCard'
-import { STOCK_MODES, stockModeOf, type StockMode } from '@/lib/stock'
+import type { Category, Product } from '@/lib/types'
+import MenuTab from './components/MenuTab'
 import { formatEquivalents, formatKg, formatPortions, portionLabel, summarizeOsh, type OshProduct, type OshSummary } from '@/lib/osh'
 import OshCard from './components/OshCard'
 
 type User = { id: string; name: string; role: string }
-type Category = { id: string; name: string; order_num: number }
-type Product = {
-  id: string; name: string; price: number; category_id: string; is_available: boolean
-  unit_type?: string; kg_to_hissa?: number; hissa_per_unit?: number
-  stock_mode?: StockMode; is_unlimited?: boolean; is_favorite?: boolean
-}
 type Shift = { id: string; is_open: boolean; opened_at: string; closed_at?: string; opened_by?: string; closed_by?: string }
 type ShiftStock = { product_id: string; initial_qty: number }
 type Order = { id: string; total: number; pay_type: string; debt_paid: boolean; debtor_name: string | null; worker_id: string; created_at: string; actual_paid?: number; payment_note?: string }
@@ -61,10 +56,6 @@ export default function AdminPage() {
   const [customTo, setCustomTo] = useState('')
   const [filteredHistory, setFilteredHistory] = useState<ShiftSummary[]>([])
 
-  const [newCatName, setNewCatName] = useState('')
-  const [newProdName, setNewProdName] = useState('')
-  const [newProdPrice, setNewProdPrice] = useState('')
-  const [newProdCat, setNewProdCat] = useState('')
   const [newWorkerName, setNewWorkerName] = useState('')
   const [newWorkerPin, setNewWorkerPin] = useState('')
   const [toast, setToast] = useState('')
@@ -242,14 +233,6 @@ export default function AdminPage() {
     return round === 'ceil' ? Math.ceil(portions) : Math.floor(portions)
   }
 
-  const setStockMode = async (p: Product, mode: StockMode) => {
-    if (stockModeOf(p) === mode) return
-    const { error } = await supabase.from('products').update({ stock_mode: mode, is_unlimited: mode === 'none' }).eq('id', p.id)
-    if (error) { showToast("Saqlanmadi: internetni tekshiring"); return }
-    setProducts(prev => prev.map(x => x.id === p.id ? { ...x, stock_mode: mode, is_unlimited: mode === 'none' } : x))
-    showToast(`${p.name}: ${STOCK_MODES.find(m => m.id === mode)?.label}`)
-  }
-
   // Osh kirimi kg bilan yoziladi: qo'lda kirim "1 kg", avto-kirim "3 hissa" ko'rinishida; boshqalari "ta"
   const stockInLabel = (si: StockIn) => {
     const p = products.find(x => x.id === si.product_id)
@@ -259,40 +242,6 @@ export default function AdminPage() {
     return `${formatKg(hissa, oshList)} = ${portions}`
   }
 
-  // Kassir panelida tepada "tez-tez sotiladigan" qatorida ko'rinadi
-  const toggleFavorite = async (p: Product) => {
-    const next = !p.is_favorite
-    const { error } = await supabase.from('products').update({ is_favorite: next }).eq('id', p.id)
-    if (error) { showToast('Saqlanmadi: internetni tekshiring'); return }
-    setProducts(prev => prev.map(x => x.id === p.id ? { ...x, is_favorite: next } : x))
-    showToast(next ? `${p.name}: kassirda tez-tez sotiladiganlarga qo'shildi` : `${p.name}: tez-tez sotiladiganlardan olindi`)
-  }
-
-  const toggleAvail = async (p: Product) => {
-    await supabase.from('products').update({ is_available: !p.is_available }).eq('id', p.id)
-    setProducts(prev => prev.map(x => x.id === p.id ? { ...x, is_available: !x.is_available } : x))
-  }
-
-  const addCategory = async () => {
-    if (!newCatName.trim()) return
-    const { data } = await supabase.from('categories').insert({ name: newCatName.trim(), order_num: categories.length + 1 }).select().single()
-    if (data) { setCategories(p => [...p, data]); setNewCatName(''); showToast('Kategoriya qoshildi!') }
-  }
-  const deleteCategory = async (id: string) => {
-    if (!window.confirm('Kategoriyani ochirasizmi?')) return
-    await supabase.from('categories').delete().eq('id', id)
-    setCategories(p => p.filter(c => c.id !== id))
-  }
-  const addProduct = async () => {
-    if (!newProdName.trim() || !newProdPrice || !newProdCat) return
-    const { data } = await supabase.from('products').insert({ name: newProdName.trim(), price: parseInt(newProdPrice), category_id: newProdCat, is_available: true }).select().single()
-    if (data) { setProducts(p => [...p, data]); setNewProdName(''); setNewProdPrice(''); setNewProdCat(''); showToast('Mahsulot qoshildi!') }
-  }
-  const deleteProduct = async (id: string) => {
-    if (!window.confirm('Mahsulotni ochirasizmi?')) return
-    await supabase.from('products').delete().eq('id', id)
-    setProducts(p => p.filter(x => x.id !== id))
-  }
   const addWorker = async () => {
     if (!newWorkerName.trim() || newWorkerPin.length !== 4) return
     const { data } = await supabase.from('users').insert({ name: newWorkerName.trim(), pin: newWorkerPin, role: 'worker' }).select().single()
@@ -820,84 +769,7 @@ export default function AdminPage() {
 
         {/* MENYU */}
         {activeTab === 'mahsulot' && (
-          <div style={{display:'flex', flexDirection:'column', gap:'12px'}}>
-            <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', padding:'16px'}}>
-              <div style={{fontWeight:900, fontSize:'14px', marginBottom:'12px'}}>Kategoriya qoshish</div>
-              <div style={{display:'flex', gap:'8px'}}>
-                <input value={newCatName} onChange={e => setNewCatName(e.target.value)} placeholder="Kategoriya nomi"
-                  style={{flex:1, border:'1px solid #e5e7eb', borderRadius:'12px', padding:'10px 12px', fontSize:'14px', outline:'none'}}/>
-                <button onClick={addCategory}
-                  style={{padding:'10px 16px', backgroundColor:'#C8860A', color:'#1A1208', borderRadius:'12px', fontWeight:900, fontSize:'14px', border:'none', cursor:'pointer'}}>+</button>
-              </div>
-              <div style={{display:'flex', flexWrap:'wrap', gap:'8px', marginTop:'12px'}}>
-                {categories.map(c => (
-                  <div key={c.id} style={{display:'flex', alignItems:'center', gap:'4px', backgroundColor:'#FFF8E7', border:'1px solid #F5C842', borderRadius:'999px', padding:'4px 12px'}}>
-                    <span style={{fontSize:'14px', fontWeight:700}}>{c.name}</span>
-                    <button onClick={() => deleteCategory(c.id)} style={{color:'#9ca3af', background:'none', border:'none', cursor:'pointer', fontSize:'12px', marginLeft:'4px'}}>x</button>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', padding:'16px'}}>
-              <div style={{fontWeight:900, fontSize:'14px', marginBottom:'12px'}}>Mahsulot qoshish</div>
-              <div style={{display:'flex', flexDirection:'column', gap:'8px'}}>
-                <input value={newProdName} onChange={e => setNewProdName(e.target.value)} placeholder="Mahsulot nomi"
-                  style={{border:'1px solid #e5e7eb', borderRadius:'12px', padding:'10px 12px', fontSize:'14px', outline:'none'}}/>
-                <div style={{display:'flex', gap:'8px'}}>
-                  <input value={newProdPrice} onChange={e => setNewProdPrice(e.target.value)} placeholder="Narxi" type="number"
-                    style={{flex:1, border:'1px solid #e5e7eb', borderRadius:'12px', padding:'10px 12px', fontSize:'14px', outline:'none'}}/>
-                  <select value={newProdCat} onChange={e => setNewProdCat(e.target.value)}
-                    style={{flex:1, border:'1px solid #e5e7eb', borderRadius:'12px', padding:'10px 12px', fontSize:'14px', outline:'none', backgroundColor:'white'}}>
-                    <option value="">Kategoriya</option>
-                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </div>
-                <button onClick={addProduct}
-                  style={{padding:'10px', backgroundColor:'#C8860A', color:'#1A1208', borderRadius:'12px', fontWeight:900, fontSize:'14px', border:'none', cursor:'pointer'}}>
-                  Qoshish
-                </button>
-              </div>
-            </div>
-            <div style={{backgroundColor:'white', borderRadius:'16px', border:'1px solid #e5e7eb', overflow:'hidden'}}>
-              <div style={{padding:'12px 16px', borderBottom:'1px solid #f3f4f6', fontWeight:900, fontSize:'14px'}}>Mahsulotlar ({products.length} ta)</div>
-              <div style={{padding:'10px 16px', borderBottom:'1px solid #f3f4f6', backgroundColor:'#f9fafb', fontSize:'12px', color:'#6b7280', lineHeight:1.6}}>
-                <b>Qoldiq rejimi:</b><br/>
-                {STOCK_MODES.map(m => <div key={m.id}><b>{m.label}</b> — {m.hint}</div>)}
-              </div>
-              {products.map(p => {
-                const cat = categories.find(c => c.id === p.category_id)
-                return (
-                  <div key={p.id} style={{display:'flex', alignItems:'center', gap:'12px', padding:'12px 16px', borderBottom:'1px solid #f9fafb'}}>
-                    <div style={{flex:1, minWidth:0}}>
-                      <div style={{fontWeight:700, fontSize:'14px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{p.name}</div>
-                      <div style={{fontSize:'12px', color:'#9ca3af'}}>{cat?.name} - {fmt(p.price)} som</div>
-                      <div style={{display:'flex', gap:'4px', marginTop:'6px'}}>
-                        {STOCK_MODES.map(m => {
-                          const active = stockModeOf(p) === m.id
-                          return (
-                            <button key={m.id} onClick={() => setStockMode(p, m.id)} title={m.hint}
-                              style={{padding:'3px 8px', borderRadius:'8px', fontSize:'11px', fontWeight:700, cursor:'pointer',
-                                border: active ? '1px solid #C8860A' : '1px solid #e5e7eb',
-                                backgroundColor: active ? '#FFF8E7' : 'white',
-                                color: active ? '#C8860A' : '#9ca3af'}}>
-                              {m.label}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                    <button onClick={() => toggleFavorite(p)} aria-label={`${p.name} tez-tez sotiladiganlarga`} title="Kassirda tepada ko'rsatish"
-                      style={{fontSize:'18px', background:'none', border:'none', cursor:'pointer', flexShrink:0, opacity: p.is_favorite ? 1 : 0.3}}>⭐</button>
-                    <button onClick={() => toggleAvail(p)}
-                      style={{padding:'4px 8px', borderRadius:'999px', fontSize:'12px', fontWeight:700, border:'none', cursor:'pointer', flexShrink:0, backgroundColor: p.is_available ? '#dcfce7' : '#fee2e2', color: p.is_available ? '#15803d' : '#b91c1c'}}>
-                      {p.is_available ? 'Bor' : "Yoq"}
-                    </button>
-                    <button onClick={() => deleteProduct(p.id)} style={{color:'#d1d5db', background:'none', border:'none', cursor:'pointer', fontSize:'18px', flexShrink:0}}>x</button>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
+          <MenuTab categories={categories} products={products} setCategories={setCategories} setProducts={setProducts} showToast={showToast} />
         )}
 
         {/* XODIMLAR */}

@@ -15,17 +15,39 @@ export const P = {
   kampot: '00000000-0000-0000-0000-00000000b006',
 }
 
-/** Smena, buyurtma, kirim-chiqim va qarzlarni tozalaydi; mahsulotlarni seed holatiga qaytaradi */
+export const C = {
+  birinchi: '00000000-0000-0000-0000-00000000c001',
+  ikkinchi: '00000000-0000-0000-0000-00000000c002',
+  ichimlik: '00000000-0000-0000-0000-00000000c003',
+}
+
+// supabase/seed.sql dagi holat
+const SEED_PRODUCTS: Record<string, { name: string; price: number; category_id: string; stock_mode: string }> = {
+  [P.mastava]: { name: 'Mastava', price: 15000, category_id: C.birinchi, stock_mode: 'none' },
+  [P.somsa]: { name: 'Somsa', price: 6000, category_id: C.ikkinchi, stock_mode: 'soft' },
+  [P.oshButun]: { name: 'Osh butun', price: 40000, category_id: C.ikkinchi, stock_mode: 'soft' },
+  [P.oshYarim]: { name: 'Osh yarim', price: 28000, category_id: C.ikkinchi, stock_mode: 'soft' },
+  [P.cola]: { name: 'Cola 1L', price: 12000, category_id: C.ichimlik, stock_mode: 'strict' },
+  [P.kampot]: { name: 'Kampot', price: 3000, category_id: C.ichimlik, stock_mode: 'strict' },
+}
+const SEED_CATEGORIES: Record<string, string> = {
+  [C.birinchi]: 'Birinchi taom', [C.ikkinchi]: 'Ikkinchi taom', [C.ichimlik]: 'Ichimlik',
+}
+const SEED_PIDS = Object.keys(SEED_PRODUCTS)
+
+/** Smena, buyurtma, kirim-chiqim va qarzlarni tozalaydi; menyuni seed holatiga qaytaradi */
 export async function resetDb() {
   const nil = '00000000-0000-0000-0000-000000000000'
   for (const t of ['debt_payments', 'order_items', 'orders', 'debtors', 'stock_ins', 'write_offs', 'shift_reports', 'shift_stock', 'osh_stock', 'shifts']) {
     const { error } = await db.from(t).delete().neq('id', nil)
     if (error) throw new Error(`${t}: ${error.message}`)
   }
-  const modes: Record<string, string> = {
-    [P.mastava]: 'none', [P.somsa]: 'soft', [P.oshButun]: 'soft', [P.oshYarim]: 'soft', [P.cola]: 'strict', [P.kampot]: 'strict',
-  }
-  for (const [id, stock_mode] of Object.entries(modes)) {
-    await db.from('products').update({ stock_mode, is_unlimited: stock_mode === 'none', is_available: true, is_favorite: false }).eq('id', id)
+  // Testlarda qo'shilgan taomlar (seeddan tashqari) olib tashlanadi
+  await db.from('products').delete().not('id', 'in', `(${SEED_PIDS.join(',')})`)
+  for (const [id, name] of Object.entries(SEED_CATEGORIES)) await db.from('categories').update({ name }).eq('id', id)
+  for (const [id, p] of Object.entries(SEED_PRODUCTS)) {
+    await db.from('products').update({
+      ...p, is_unlimited: p.stock_mode === 'none', is_available: true, is_favorite: false, hide_when_empty: false,
+    }).eq('id', id)
   }
 }
