@@ -26,6 +26,6 @@ export async function resetDb() {
     [P.mastava]: 'none', [P.somsa]: 'soft', [P.oshButun]: 'soft', [P.oshYarim]: 'soft', [P.cola]: 'strict', [P.kampot]: 'strict',
   }
   for (const [id, stock_mode] of Object.entries(modes)) {
-    await db.from('products').update({ stock_mode, is_unlimited: stock_mode === 'none', is_available: true }).eq('id', id)
+    await db.from('products').update({ stock_mode, is_unlimited: stock_mode === 'none', is_available: true, is_favorite: false }).eq('id', id)
   }
 }

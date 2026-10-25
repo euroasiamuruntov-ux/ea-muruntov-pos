@@ -69,7 +69,7 @@ describe('stockInfo', () => {
   })
   it('cheksiz: faqat taxminiy qoldiq', () => {
     expect(stockInfo('none', 7)).toEqual({ level: 'muted', text: '~7 ta' })
-    expect(stockInfo('none', 0)).toBeNull()
+    expect(stockInfo('none', 0)).toEqual({ level: 'muted', text: 'Cheksiz' })
   })
   it('birlik nomi (stakan)', () => {
     expect(stockInfo('strict', 9, 'stakan')?.text).toBe('Qoldiq: 9 stakan')

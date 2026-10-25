@@ -14,7 +14,7 @@ type Category = { id: string; name: string; order_num: number }
 type Product = {
   id: string; name: string; price: number; category_id: string; is_available: boolean
   unit_type?: string; kg_to_hissa?: number; hissa_per_unit?: number
-  stock_mode?: StockMode; is_unlimited?: boolean
+  stock_mode?: StockMode; is_unlimited?: boolean; is_favorite?: boolean
 }
 type Shift = { id: string; is_open: boolean; opened_at: string; closed_at?: string; opened_by?: string; closed_by?: string }
 type ShiftStock = { product_id: string; initial_qty: number }
@@ -257,6 +257,15 @@ export default function AdminPage() {
     const hissa = Math.round(si.qty * (p.kg_to_hissa || 21))
     const portions = `${Math.floor(hissa / (p.hissa_per_unit || 1))} ${portionLabel({ id: p.id, name: p.name })}`
     return `${formatKg(hissa, oshList)} = ${portions}`
+  }
+
+  // Kassir panelida tepada "tez-tez sotiladigan" qatorida ko'rinadi
+  const toggleFavorite = async (p: Product) => {
+    const next = !p.is_favorite
+    const { error } = await supabase.from('products').update({ is_favorite: next }).eq('id', p.id)
+    if (error) { showToast('Saqlanmadi: internetni tekshiring'); return }
+    setProducts(prev => prev.map(x => x.id === p.id ? { ...x, is_favorite: next } : x))
+    showToast(next ? `${p.name}: kassirda tez-tez sotiladiganlarga qo'shildi` : `${p.name}: tez-tez sotiladiganlardan olindi`)
   }
 
   const toggleAvail = async (p: Product) => {
@@ -877,6 +886,8 @@ export default function AdminPage() {
                         })}
                       </div>
                     </div>
+                    <button onClick={() => toggleFavorite(p)} aria-label={`${p.name} tez-tez sotiladiganlarga`} title="Kassirda tepada ko'rsatish"
+                      style={{fontSize:'18px', background:'none', border:'none', cursor:'pointer', flexShrink:0, opacity: p.is_favorite ? 1 : 0.3}}>⭐</button>
                     <button onClick={() => toggleAvail(p)}
                       style={{padding:'4px 8px', borderRadius:'999px', fontSize:'12px', fontWeight:700, border:'none', cursor:'pointer', flexShrink:0, backgroundColor: p.is_available ? '#dcfce7' : '#fee2e2', color: p.is_available ? '#15803d' : '#b91c1c'}}>
                       {p.is_available ? 'Bor' : "Yoq"}

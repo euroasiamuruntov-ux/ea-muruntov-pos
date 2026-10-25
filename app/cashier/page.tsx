@@ -6,15 +6,14 @@ import { LogOut, ShoppingCart, Plus, X, PackagePlus, PackageMinus, Clock, Search
 import DebtorCard from './components/DebtorCard'
 import jsPDF from 'jspdf'
 import {
-  canSetQty, extraQty, extraSummary, isVisible as isProductVisible, stockInfo, stockModeOf, toBalances,
-  type Balances, type NewOrderExtra, type StockLevel, type StockMode,
+  canSetQty, extraQty, extraSummary, isVisible as isProductVisible, stockModeOf, toBalances,
+  type Balances, type NewOrderExtra, type StockMode,
 } from '@/lib/stock'
+import { matchesQuery } from '@/lib/search'
+import ProductCard from './components/ProductCard'
+import NumberPad from './components/NumberPad'
 import { friendlyError } from '@/lib/errors'
 import { formatEquivalents, formatKg, hissaFromKg, portionLabel, portionsToHissa } from '@/lib/osh'
-
-const LEVEL_STYLE: Record<StockLevel, string> = {
-  ok: 'text-green-600', low: 'text-orange-500', empty: 'text-red-500', extra: 'text-amber-600', muted: 'text-gray-400',
-}
 
 type User = { id: string; name: string; role: string }
 type Category = { id: string; name: string }
@@ -22,7 +21,7 @@ type Product = {
   id: string; name: string; price: number; category_id: string
   is_available: boolean; unit_type: string; hissa_per_unit: number
   kg_to_hissa: number; is_unlimited: boolean; unit_label: string
-  litr_per_unit: number | null; hide_when_empty: boolean; stock_mode?: StockMode
+  litr_per_unit: number | null; hide_when_empty: boolean; stock_mode?: StockMode; is_favorite?: boolean
 }
 type CartItem = { product: Product; qty: number }
 type Bill = { id: number; cart: CartItem[] }
@@ -45,6 +44,8 @@ export default function CashierPage() {
   const [debtors, setDebtors] = useState<Debtor[]>([])
   const [prevStocks, setPrevStocks] = useState<PrevStock[]>([])
   const [activeCat, setActiveCat] = useState('Barchasi')
+  const [search, setSearch] = useState('')
+  const [padFor, setPadFor] = useState<Product | null>(null)
   const [payType, setPayType] = useState<'naqd' | 'click' | 'karta' | 'qarz' | 'ichki'>('naqd')
   const [debtorName, setDebtorName] = useState('')
   const [debtorPhone, setDebtorPhone] = useState('')
@@ -308,10 +309,15 @@ export default function CashierPage() {
 
   const updateBillCart = (newCart: CartItem[]) => setBills(prev => prev.map(b => b.id === activeBillId ? { ...b, cart: newCart } : b))
 
-  const filteredProducts = (activeCat === 'Barchasi'
-    ? products
-    : products.filter(p => { const cat = categories.find(c => c.name === activeCat); return cat && p.category_id === cat.id })
+  // Qidiruv yozilgan bo'lsa kategoriyaga qaramay hamma taomlar ichidan topiladi
+  const query = search.trim()
+  const filteredProducts = (query
+    ? products.filter(p => matchesQuery(p.name, query))
+    : activeCat === 'Barchasi'
+      ? products
+      : products.filter(p => { const cat = categories.find(c => c.name === activeCat); return cat && p.category_id === cat.id })
   ).filter(p => isVisible(p))
+  const favorites = products.filter(p => p.is_favorite && isVisible(p))
 
   const filteredDebtors = debtors.filter(d => d.name.toLowerCase().includes(debtorSearch.toLowerCase()) || (d.phone || '').includes(debtorSearch))
 
@@ -324,6 +330,16 @@ export default function CashierPage() {
     else updateBillCart([...cart, { product, qty: 1 }])
   }
 
+  // Savatdagi miqdorni to'g'ridan-to'g'ri belgilash (raqam paneli). 0 = savatdan olib tashlash.
+  const setCartQty = (product: Product, n: number): boolean => {
+    if (!shift) { showToast('Avval smena oching!'); return false }
+    if (n <= 0) { updateBillCart(cart.filter(i => i.product.id !== product.id)); return true }
+    if (!checkQty(product, n)) return false
+    const existing = cart.find(i => i.product.id === product.id)
+    updateBillCart(existing ? cart.map(i => i.product.id === product.id ? { ...i, qty: n } : i) : [...cart, { product, qty: n }])
+    return true
+  }
+
   const changeQty = (productId: string, delta: number) => {
     const prod = products.find(p => p.id === productId)
     if (delta > 0 && prod && !checkQty(prod, (cart.find(i => i.product.id === productId)?.qty || 0) + delta)) return
@@ -332,6 +348,12 @@ export default function CashierPage() {
 
   const total = cart.reduce((s, i) => s + i.product.price * i.qty, 0)
   const cartQty = (id: string) => cart.find(i => i.product.id === id)?.qty || 0
+
+  const renderCard = (p: Product, compact = false) => (
+    <ProductCard key={`${p.id}${compact ? '-tez' : ''}`} compact={compact} name={p.name} price={p.price}
+      qty={cartQty(p.id)} mode={modeOf(p)} balance={getBalance(p.id)} unit={unitOf(p)}
+      onAdd={() => addToCart(p)} onLongPress={() => { if (!shift) { showToast('Avval smena oching!'); return } setPadFor(p) }} onRestock={() => openKirimFor(p)} />
+  )
 
   const confirmOrder = async () => {
     if (cart.length === 0 || !shift || busy.current) return
@@ -517,44 +539,42 @@ export default function CashierPage() {
       ) : (
       <div className="flex flex-1 overflow-hidden">
         <div className="flex flex-col border-r border-[#E0DDD5]" style={{width:'62%'}}>
-          <div className="bg-[#2C200A] px-3 py-2 flex gap-2 overflow-x-auto flex-shrink-0">
-            {['Barchasi', ...categories.map(c => c.name)].map(cat => (
-              <button key={cat} onClick={() => setActiveCat(cat)}
-                className={`px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-all flex-shrink-0 ${activeCat === cat ? 'bg-[#C8860A] text-[#1A1208]' : 'bg-[#3D2E10] text-gray-400 hover:text-gray-200'}`}>
-                {cat}
-              </button>
-            ))}
+          <div className="bg-[#2C200A] px-3 pt-2 flex-shrink-0">
+            <div className="relative">
+              <Search size={16} className="absolute left-3 top-3 text-gray-500"/>
+              <input type="text" inputMode="search" placeholder="Taom qidirish..." aria-label="Taom qidirish" value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-full bg-[#3D2E10] text-[#F5C842] placeholder-gray-500 rounded-xl pl-10 pr-10 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#C8860A]"/>
+              {search && (
+                <button type="button" aria-label="Qidiruvni tozalash" onClick={() => setSearch('')}
+                  className="absolute right-1 top-1 w-9 h-9 rounded-full text-gray-400 flex items-center justify-center"><X size={16}/></button>
+              )}
+            </div>
           </div>
+          {!query && (
+            <div className="bg-[#2C200A] px-3 py-2 flex gap-2 overflow-x-auto flex-shrink-0">
+              {['Barchasi', ...categories.map(c => c.name)].map(cat => (
+                <button key={cat} onClick={() => setActiveCat(cat)}
+                  className={`px-5 py-2.5 rounded-full text-base font-bold whitespace-nowrap transition-all flex-shrink-0 ${activeCat === cat ? 'bg-[#C8860A] text-[#1A1208]' : 'bg-[#3D2E10] text-gray-400 hover:text-gray-200'}`}>
+                  {cat}
+                </button>
+              ))}
+            </div>
+          )}
+          {!query && favorites.length > 0 && (
+            <div data-testid="favorites" className="px-3 pt-2 flex-shrink-0 border-b border-[#E0DDD5]">
+              <div className="text-[11px] font-black text-[#C8860A] tracking-wide">⭐ TEZ-TEZ SOTILADIGAN</div>
+              <div className="flex gap-3 overflow-x-auto pt-3 pb-2 pr-2">
+                {favorites.map(p => renderCard(p, true))}
+              </div>
+            </div>
+          )}
           <div className="flex-1 overflow-y-auto p-3">
+            {query && (
+              <div className="text-xs font-bold text-gray-500 mb-2">{filteredProducts.length > 0 ? `${filteredProducts.length} ta topildi` : 'Topilmadi'}</div>
+            )}
             <div className="grid grid-cols-3 gap-3">
-              {filteredProducts.map(p => {
-                const qty = cartQty(p.id)
-                const mode = modeOf(p)
-                const balance = getBalance(p.id)
-                const info = stockInfo(mode, balance, unitOf(p))
-                const extra = extraQty(mode, balance, qty)
-                return (
-                  <div key={p.id} onClick={() => addToCart(p)}
-                    className={`bg-white rounded-2xl overflow-hidden cursor-pointer border-2 transition-all select-none ${qty > 0 ? 'border-[#F5C842]' : 'border-transparent hover:border-[#C8860A] hover:-translate-y-0.5'}`}>
-                    <div className="bg-gradient-to-br from-[#FFF3D6] to-[#FFE8A3] h-24 flex items-center justify-center relative">
-                      <span className="text-5xl">🍽️</span>
-                      {qty > 0 && <div className="absolute top-2 right-2 bg-[#C8860A] text-[#1A1208] rounded-full w-7 h-7 flex items-center justify-center text-sm font-black">{qty}</div>}
-                    </div>
-                    <div className="p-3">
-                      <div className="font-extrabold text-[#1A1208] text-sm leading-tight">{p.name}</div>
-                      <div className="text-[#C8860A] font-black text-base mt-1">{fmt(p.price)} so'm</div>
-                      {info && <div className={`text-xs font-bold mt-1 ${LEVEL_STYLE[info.level]}`}>{info.text}</div>}
-                      {extra > 0 && <div className="text-[11px] font-bold text-amber-600">+{extra} avto-kirim bo&apos;ladi</div>}
-                      {mode === 'soft' && (info?.level === 'extra' || info?.level === 'low') && (
-                        <button type="button" onClick={e => { e.stopPropagation(); openKirimFor(p) }}
-                          className="mt-1.5 px-2 py-1 rounded-lg bg-[#FFF8E7] border border-[#F5C842] text-[#C8860A] text-[11px] font-black">
-                          + tayyor
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
+              {filteredProducts.map(p => renderCard(p))}
             </div>
           </div>
         </div>
@@ -576,7 +596,7 @@ export default function CashierPage() {
           </div>
           <div className="flex-1 overflow-y-auto px-3 py-1">
             {cart.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-gray-300 gap-3"><ShoppingCart size={48} strokeWidth={1.5}/><div className="text-sm font-bold">Mahsulot tanlang</div></div>
+              <div className="h-full flex flex-col items-center justify-center text-gray-300 gap-3"><ShoppingCart size={48} strokeWidth={1.5}/><div className="text-sm font-bold">Mahsulot tanlang</div><div className="text-xs text-gray-300 text-center px-6">Kartani bosib turing: sonni raqam bilan kiritish</div></div>
             ) : cart.map(item => (
               <div key={item.product.id} className="flex items-center gap-2 py-3 border-b border-gray-50">
                 <div className="flex-1 min-w-0">
@@ -587,17 +607,10 @@ export default function CashierPage() {
                   )}
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0">
-                  <button onClick={() => changeQty(item.product.id, -1)} className="w-7 h-7 rounded-lg border border-gray-200 bg-gray-50 font-bold flex items-center justify-center hover:border-[#C8860A] hover:text-[#C8860A] transition-all">-</button>
-                  <input type="number" defaultValue={item.qty} min={1} onFocus={e => e.target.select()}
-                    onBlur={e => {
-                      const val = parseInt(e.target.value)
-                      if (!val || val < 1) { e.target.value = String(item.qty); return }
-                      const prod = products.find(p => p.id === item.product.id)
-                      if (prod && !checkQty(prod, val)) { e.target.value = String(item.qty); return }
-                      updateBillCart(cart.map(i => i.product.id === item.product.id ? { ...i, qty: val } : i))
-                    }} key={item.qty}
-                    style={{width:'44px', textAlign:'center', fontWeight:900, fontSize:'14px', border:'1px solid #e5e7eb', borderRadius:'6px', padding:'2px 4px', outline:'none'}}/>
-                  <button onClick={() => changeQty(item.product.id, 1)} className="w-7 h-7 rounded-lg border border-gray-200 bg-gray-50 font-bold flex items-center justify-center hover:border-[#C8860A] hover:text-[#C8860A] transition-all">+</button>
+                  <button aria-label={`${item.product.name} kamaytirish`} onClick={() => changeQty(item.product.id, -1)} className="w-9 h-9 rounded-lg border border-gray-200 bg-gray-50 font-bold flex items-center justify-center hover:border-[#C8860A] hover:text-[#C8860A] transition-all">-</button>
+                  <button type="button" aria-label={`${item.product.name} miqdori`} onClick={() => setPadFor(item.product)}
+                    className="min-w-12 h-9 px-2 rounded-lg border-2 border-[#F5C842] bg-[#FFF8E7] font-black text-base text-[#1A1208]">{item.qty}</button>
+                  <button aria-label={`${item.product.name} ko'paytirish`} onClick={() => changeQty(item.product.id, 1)} className="w-9 h-9 rounded-lg border border-gray-200 bg-gray-50 font-bold flex items-center justify-center hover:border-[#C8860A] hover:text-[#C8860A] transition-all">+</button>
                 </div>
                 <div className="font-black text-[#C8860A] text-sm min-w-[64px] text-right">{fmt(item.product.price * item.qty)}</div>
               </div>
@@ -978,6 +991,12 @@ export default function CashierPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {padFor && (
+        <NumberPad title={padFor.name} subtitle={`${fmt(padFor.price)} so'm`} initial={cartQty(padFor.id)}
+          onClose={() => setPadFor(null)}
+          onConfirm={n => { if (setCartQty(padFor, n)) setPadFor(null) }} />
       )}
 
       {toast && (
