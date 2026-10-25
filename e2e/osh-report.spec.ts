@@ -34,7 +34,9 @@ test('rahbar hisoboti: osh bitta qozon sifatida, raqamlar mos va chalg\'itmaydi'
   await expect(card).toContainText('-54')                       // 30 + 24 hissa
   await expect(card).toContainText('Osh butun 10 ta')
   await expect(card).toContainText('Osh yarim 12 ta')
-  await expect(card).toContainText('30 hissa yozuvsiz sotilgan')
+  await expect(card).toContainText("oshpaz yozilganidan ko'p qilgan")          // qozon yetmagan emas, tizimda yo'q edi
+  await expect(card).toContainText('30 hissa tizimga yozilmagan holda sotilgan')
+  await expect(card).not.toContainText('qozonda yetmagan')
 
   // Kirimlar ro'yxati: osh kg/hissa bilan, kasr raqam "ta" bo'lib chiqmaydi
   await expect(page.getByText('Osh butun — 1 kg')).toBeVisible()

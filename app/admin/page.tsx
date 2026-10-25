@@ -202,7 +202,7 @@ export default function AdminPage() {
     })
     ;((siData || []) as StockIn[]).filter(si => si.source === 'auto_extra').forEach(si => {
       const prod = products.find(p => p.id === si.product_id)
-      izohlar.push({ type: 'avto_kirim', text: `${prod?.name || '—'} — +${toPortions(prod, si.qty, 'ceil')} ta qo'shimcha tayyorlangan`, izoh: si.note || 'Sotuv paytida tizimda yetmadi (avto-kirim)', xodim: workers.find(w => w.id === si.worker_id)?.name || '—', vaqt: si.created_at })
+      izohlar.push({ type: 'avto_kirim', text: `${prod?.name || '—'} — +${toPortions(prod, si.qty, 'ceil')} ta qo'shimcha tayyorlangan`, izoh: "Tizimda qoldiq yo'q edi: oshpaz yozilganidan ko'p tayyorlagan (avto-kirim)", xodim: workers.find(w => w.id === si.worker_id)?.name || '—', vaqt: si.created_at })
     })
     ;(ichkiOrds || []).forEach((o: any) => {
       const items = orderItemsData.filter((oi: any) => oi.order_id === o.id)
@@ -383,11 +383,11 @@ export default function AdminPage() {
       doc.text('Osh (umumiy qozon, hissa hisobida):', 20, y); y += 6
       doc.setFont('helvetica', 'normal'); doc.setFontSize(9)
       const oshLines = [
-        `Boshlangich: ${osh.initial} | Kirim: +${osh.kirimHissa} (${osh.kirimKg} kg) | Avto-kirim: +${osh.auto}`,
+        `Boshlangich: ${osh.initial} | Kirim: +${osh.kirimHissa} (${osh.kirimKg} kg) | Qoshimcha tayyorlangan (avto): +${osh.auto}`,
         `Sotildi: -${osh.soldHissa}${osh.sold.length ? ' (' + osh.sold.map(x => `${x.name} ${x.qty} ta`).join(', ') + ')' : ''} | Chiqim: -${osh.writeOff}`,
         `Qoldiq: ${osh.remaining} hissa${osh.portions.length ? ' (' + osh.portions.map(x => `${x.name} ${x.qty} ta`).join(' yoki ') + ')' : ''}`,
       ]
-      if (osh.unexplained !== 0) oshLines.push(`Hisobda farq: ${osh.unexplained > 0 ? '+' : ''}${osh.unexplained} hissa (yozuvsiz harakat)`)
+      if (osh.unexplained !== 0) oshLines.push(`Hisobda farq: ${osh.unexplained > 0 ? '+' : ''}${osh.unexplained} hissa (tizimga yozilmagan sotuv/chiqim)`)
       oshLines.forEach(l => { doc.text(l.slice(0, 110), 22, y); y += 5 })
     }
     doc.setFontSize(8); doc.setTextColor(150)
@@ -534,7 +534,7 @@ export default function AdminPage() {
                   {[
                     { label: "Boshlang'ich", val: String(osh.initial), color: '#6b7280', note: osh.discarded > 0 ? `${osh.discarded} hissa smena boshida tashlangan` : '' },
                     { label: 'Kirim', val: osh.kirimHissa > 0 ? `+${osh.kirimHissa}` : '—', color: '#16a34a', note: osh.kirimKg > 0 ? `${osh.kirimKg} kg` : '' },
-                    { label: 'Avto-kirim', val: osh.auto > 0 ? `+${osh.auto}` : '—', color: '#d97706', note: osh.auto > 0 ? 'sotuv paytida qozonda yetmagan' : '' },
+                    { label: 'Avto-kirim', val: osh.auto > 0 ? `+${osh.auto}` : '—', color: '#d97706', note: osh.auto > 0 ? "oshpaz yozilganidan ko'p qilgan (tizimda yo'q edi)" : '' },
                     { label: 'Sotildi', val: osh.soldHissa > 0 ? `-${osh.soldHissa}` : '—', color: '#C8860A', note: osh.sold.map(x => `${x.name} ${x.qty} ta`).join(' · ') },
                     { label: 'Chiqim', val: osh.writeOff > 0 ? `-${osh.writeOff}` : '—', color: '#ef4444', note: '' },
                   ].map(r => (
@@ -554,8 +554,8 @@ export default function AdminPage() {
                   {osh.unexplained !== 0 && (
                     <div style={{marginTop:'4px', marginBottom:'8px', backgroundColor:'#fffbeb', border:'1px solid #fde68a', borderRadius:'10px', padding:'8px 10px', fontSize:'11px', color:'#92400e', lineHeight:1.5}}>
                       {osh.unexplained > 0
-                        ? `${osh.unexplained} hissa yozuvsiz sotilgan: osh "Cheksiz" rejimida bo'lganda yoki kirim kiritilmasdan sotilgan.`
-                        : `Qozonda hisobdan ${-osh.unexplained} hissa kam: yozilmagan chiqim bo'lishi mumkin.`}
+                        ? `${osh.unexplained} hissa tizimga yozilmagan holda sotilgan (osh "Cheksiz" rejimida bo'lganda yoki kirim kiritilishidan oldin). Qozonda bor edi, tizimda yo'q edi.`
+                        : `Tizimdagi qoldiq hisoblanganidan ${-osh.unexplained} hissa kam: yozilmagan chiqim bo'lishi mumkin.`}
                     </div>
                   )}
                 </div>
