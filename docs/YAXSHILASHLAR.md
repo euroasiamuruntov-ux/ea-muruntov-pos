@@ -18,7 +18,7 @@ Foydalanuvchi sinovlari va takliflari asosida. Holat: ✅ tayyor · 🔧 jarayon
 - 📋 **Menyu: mahsulotni tahrirlash.** Nom, narx, kategoriya, qoldiq rejimi, "tugaganda yashir" bitta joyda (hozir tahrirlash yo'q, faqat qo'shish/o'chirish).
 - 📋 **Hisobot va Tarix: bo'limlarni yig'ish/yoyish.** Har bo'lim (moliya, mahsulot hisobi, osh, chiqimlar, kirimlar, izohlar) bosilganda ochiladi/yopiladi.
 - 📋 **Hisobot: davr tanlash.** Qaysi ma'lumot qaysi davr uchun kerakligini tanlash (smena, kun, hafta, oy). Kam ishlatiladigan hisobotlar tugmalar orqali ochiladi, asosiy sahifa sodda qoladi.
-- 📋 **Tarix: osh ham bitta qozon sifatida.** Hozir faqat Hisobot tabida tuzatilgan.
+- ✅ **Tarix: osh ham bitta qozon sifatida** (kg va butun/yarim bilan), Hisobot tabi bilan bir xil.
 
 ## Kassir paneli
 
